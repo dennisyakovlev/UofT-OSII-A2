@@ -5,4 +5,4 @@ all: alloc.c main2.c
 	gcc $(CC_FLAGS) alloc.c main2.c
 
 clean:
-	rm *.out *.swp *.o
+	rm *.out *.o
