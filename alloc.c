@@ -7,7 +7,6 @@
 #include <assert.h>
 
 // -------------------------------  Hash Table Begin        -------------------------------
-
 //region Hash Table
 
 typedef int table_key;
@@ -79,7 +78,6 @@ void table_free()
 }
 
 //endregion
-
 // -------------------------------  Hash Table End          -------------------------------
 
 
@@ -90,6 +88,7 @@ const ptrdiff_t BITSET_SZ[8] = {8,8, 8,  8,   4,    1,     1,      1};
 
 
 // -------------------------------  Block Collection Begin  -------------------------------
+//region Block Collection
 
 /**
 a block collection is a contiguous set of memory where
@@ -146,9 +145,11 @@ size_t collection_needed(uint32_t bitset_sz, ptrdiff_t blk_sz)
     return sizeof(block_collection) + ((sizeof(void*) + blk_sz) * 32*bitset_sz);
 }
 
+//endregion
 // -------------------------------  Block Collection End    -------------------------------
 
 // -------------------------------  Block Manager Begin     -------------------------------
+// region Block Manager
 
 /**
 contains lists of different block allocation sizes
@@ -213,9 +214,11 @@ void manager_erase(block_manager* manager, uint32_t type, block_collection* node
     manager->M_num[type] -= 1;
 }
 
+//endregion
 // -------------------------------  Block Manager End       -------------------------------
 
 // -------------------------------  Global Allocator Start  -------------------------------
+//region Global Allocator
 
 block_manager allocator;
 
@@ -359,6 +362,7 @@ void allocator_give_manager(block_manager* manager)
     allocator.M_next = manager;
 }
 
+//endregion
 // -------------------------------  Global Allocator End    -------------------------------
 
 /*
