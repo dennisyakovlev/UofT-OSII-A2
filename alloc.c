@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <alloc.h>
+#include <string.h>
 
 #include <assert.h>
 
@@ -318,12 +319,14 @@ int allocator_give_collection(block_manager* manager, block_collection* collecti
 
 int allocator_force_take_manager(uint32_t num)
 {
-    block_manager* managers = malloc(sizeof(block_manager) * num);
+    const size_t wanted     = sizeof(block_manager) * num;
+    block_manager* managers = malloc(wanted);
+    memset(managers, 0, wanted);
 
     for (uint32_t i=0; i!=num; ++i, ++managers)
     {
-        managers->M_next = allocator.M_next;
-        allocator.M_next = managers;
+        managers->M_next  = allocator.M_next;
+        allocator.M_next  = managers;
     }
 
     return 0;
@@ -371,7 +374,7 @@ void allocator_give_manager(block_manager* manager)
    else just allocate into the first collection
 */
 
-void *serial_allocate(size_t sz, block_manager* manager)
+void* serial_allocate(size_t sz, block_manager* manager)
 {
     // find the block collection with a good size
     // TODO: use vector instructions
@@ -389,7 +392,7 @@ void *serial_allocate(size_t sz, block_manager* manager)
     if (collection == NULL) return NULL;
 
     // find a node with free blocks
-
+    return NULL;
 }
 
 
