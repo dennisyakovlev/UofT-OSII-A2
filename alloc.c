@@ -9,6 +9,8 @@
 // -------------------------------  Hash Table Begin        -------------------------------
 //region Hash Table
 
+#define HASH_TABLE_INUSE 8
+#define HASH_TABLE_FREE  9
 typedef int table_key;
 
 typedef struct hash_table_node
@@ -28,14 +30,14 @@ hash_table;
 
 int table_need(int sz)
 {
-    return sizeof(table_node) * sz + sizeof(int);
+    return sizeof(table_node) * sz + sizeof(hash_table);
 }
 
 void table_init(hash_table* tbl, int sz)
 {
     tbl->M_sz  = sz;
-    tbl->M_arr = (table_node*)((char*)tbl + sizeof(int));
-    for (int i=0; i!=sz; ++i) tbl->M_arr[i].M_used = 3;
+    tbl->M_arr = (table_node*)((char*)tbl + sizeof(hash_table));
+    for (int i=0; i!=sz; ++i) tbl->M_arr[i].M_used = HASH_TABLE_FREE;
 }
 
 void* table_lookup(hash_table* tbl, table_key k)
@@ -49,31 +51,22 @@ void* table_lookup(hash_table* tbl, table_key k)
 
 void table_insert(hash_table* tbl, table_key k, void* data)
 {
-    for (int i=0;i!=tbl->M_sz;++i)
-    {
-        if (tbl->M_arr[k].M_used == 3)
-        {
-            tbl->M_arr[k].M_key  = k;
-            tbl->M_arr[k].M_data = data;
-            return;
-        }
-    }
+    assert(tbl->M_arr[k].M_used == HASH_TABLE_FREE);
+
+    tbl->M_arr[k].M_used = HASH_TABLE_INUSE;
+    tbl->M_arr[k].M_key  = k;
+    tbl->M_arr[k].M_data = data;
 }
 
-void* table_remove(hash_table* tbl, table_key k)
+void table_remove(hash_table* tbl, table_key k)
 {
-    for (int i=0;i!=tbl->M_sz;++i)
-    {
-        if (tbl->M_arr[k].M_key == k && tbl->M_arr[i].M_used == 1)
-        {
-            tbl->M_arr[k].M_used = 0;
-            return tbl->M_arr[k].M_data;
-        }
-    }
-    return NULL;
+    assert(tbl->M_arr[k].M_used == HASH_TABLE_INUSE);
+
+    memset(tbl->M_arr + k, 0, sizeof(table_node)); // defensive
+    tbl->M_arr[k].M_used = HASH_TABLE_FREE;
 }
 
-void table_free()
+void table_free(void)
 {
 }
 
@@ -339,7 +332,7 @@ int allocator_force_take_manager(uint32_t num)
  * take a manager from the available global ones or allocate
  * some new somes.
  */
-block_manager* allocator_take_manager()
+block_manager* allocator_take_manager(void)
 {
     if (allocator.M_next==NULL && allocator_force_take_manager(4))
         return NULL;
@@ -406,13 +399,6 @@ hash_table* G_table;
 void *mm_malloc(size_t sz)
 {
 // get block manager for this thread
-const uint32_t hash = 0;
-block_manager* manager = table_lookup(G_table, hash);
-if (manager==NULL)
-{
-    allocator_take_manager(&manager);
-}
-
 // get block_manager from hashmap using tid
 // find corresponding block size for allocation
 // check all the block collections
@@ -439,13 +425,8 @@ int mm_init(void)
     req[0].M_num       = 8;
     allocator_force_take_collection(&allocator, req, 0);
 
-    block_manager* manager;
-    allocator_take_manager(&manager);
+    block_manager* manager = allocator_take_manager();
     table_insert(G_table, 0, manager);
-
-    // TODO: need predefined bitset size per blk_sz
-    //          otherwise need to somehow account for getting possiblity
-    //          of not matching bitset_sz
 
     req[0].M_bitset_sz = BITSET_SZ[1];
     req[0].M_blk_sz    = BLOCK_SZ[1];
