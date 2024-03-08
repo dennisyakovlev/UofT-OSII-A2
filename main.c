@@ -35,7 +35,7 @@ int vec_index(__m128i arr, __m128i look_for)
     return _tzcnt_u32(mask);
 }
 
-int main(int argc, char argv[])
+int main(int argc, char* argv[])
 {
     __m128i arr = _mm_setr_epi8(0,1,2,7,4,5,6,3,8,9,10,11,12,13,14,15);
     __m128i num = _mm_set1_epi8(20);

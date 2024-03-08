@@ -8,7 +8,6 @@
 #include <assert.h>
 
 // -------------------------------  Hash Table Begin        -------------------------------
-
 //region Hash Table
 
 #define HASH_TABLE_INUSE 8
@@ -73,7 +72,6 @@ void table_free(void)
 }
 
 //endregion
-
 // -------------------------------  Hash Table End          -------------------------------
 
 
@@ -84,6 +82,7 @@ const ptrdiff_t BITSET_SZ[8] = {8,8, 8,  8,   4,    1,     1,      1};
 
 
 // -------------------------------  Block Collection Begin  -------------------------------
+//region Block Collection
 
 /**
 a block collection is a contiguous set of memory where
@@ -138,6 +137,7 @@ size_t collection_needed(uint32_t bitset_sz, ptrdiff_t blk_sz)
     return sizeof(block_collection) + ((sizeof(void*) + blk_sz) * 32*bitset_sz);
 }
 
+<<<<<<< HEAD
 /**
  * find the first block size for which sz is >= to
  */
@@ -191,9 +191,13 @@ void collection_free(void* ptr)
     collection->M_bitset[blk_index/32] &= ~(1 << (31 - (blk_index%32)));
 }
 
+=======
+//endregion
+>>>>>>> 318379b98a58a836ebf4454445d8f37c8b26d01d
 // -------------------------------  Block Collection End    -------------------------------
 
 // -------------------------------  Block Manager Begin     -------------------------------
+// region Block Manager
 
 /**
 contains lists of different block allocation sizes
@@ -264,6 +268,7 @@ void manager_erase(block_manager* manager, uint32_t type, block_collection* node
     manager->M_num[type] -= 1;
 }
 
+<<<<<<< HEAD
 void manager_lock(block_manager* manager)
 {
 }
@@ -273,9 +278,13 @@ void manager_unlock(block_manager* manager)
     
 }
 
+=======
+//endregion
+>>>>>>> 318379b98a58a836ebf4454445d8f37c8b26d01d
 // -------------------------------  Block Manager End       -------------------------------
 
 // -------------------------------  Global Allocator Start  -------------------------------
+//region Global Allocator
 
 block_manager allocator;
 
@@ -421,6 +430,7 @@ void allocator_give_manager(block_manager* manager)
     allocator.M_next = manager;
 }
 
+//endregion
 // -------------------------------  Global Allocator End    -------------------------------
 
 /*
