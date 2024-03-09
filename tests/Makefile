@@ -1,5 +1,5 @@
 CC = g++
-CC_FLAGS = -I. -march=native
+CC_FLAGS = -I. -march=native -ggdb3
 LIBS = -lpthread
 DEPS = tests.h alloc.h
 OBJS = basic.o unique.o multi_basic.o alloc.o

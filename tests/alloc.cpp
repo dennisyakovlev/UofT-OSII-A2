@@ -78,63 +78,90 @@ static inline __attribute__((always_inline)) int vector_find_first_gte(int32_t* 
 
 #define HASH_TABLE_INUSE 8
 #define HASH_TABLE_FREE  9
-typedef int table_key;
 
-typedef struct hash_table_node
-{
-    short     M_used;
-    table_key M_key;
-    void*     M_data;
-}
-table_node;
-
+/**
+ * a probabilistic hash table that uses fixed seperate chaining
+ */
 typedef struct fast_hash_table
 {
-    int         M_sz;
-    table_node* M_arr;
+    int32_t   M_sz;
+    int32_t** M_keys;    // 1d array treated as 2d array of size n*8
+    void***    M_values;  // 1d array treated as 2d array of size n*8
 }
 hash_table;
 
-int table_need(int sz)
+/**
+ * hash function taken from internet
+ * https://stackoverflow.com/questions/664014/what-integer-hash-function-are-good-that-accepts-an-integer-hash-key
+ */
+int32_t table_hash(hash_table* table, int32_t x)
 {
-    return sizeof(table_node) * sz + sizeof(hash_table);
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = (x >> 16) ^ x;
+    return 1 + (x % table->M_sz);
 }
 
-void table_init(hash_table* tbl, int sz)
+int32_t table_need(int32_t sz)
 {
-    tbl->M_sz  = sz;
-    tbl->M_arr = (table_node*)((char*)tbl + sizeof(hash_table));
-    for (int i=0; i!=sz; ++i) tbl->M_arr[i].M_used = HASH_TABLE_FREE;
+    return sizeof(hash_table) + ((8 * sz) * sizeof(int32_t)) + ((8 * sz) + sizeof(void*));
 }
 
-void* table_lookup(hash_table* tbl, table_key k)
+void table_init(hash_table* table, int32_t sz)
 {
-    for (int i=0;i!=tbl->M_sz;++i)
-    {
-        if (tbl->M_arr[i].M_key == k && tbl->M_arr[i].M_used == 1) return tbl->M_arr[i].M_data;
-    }
-    return NULL;
+    /*
+        layout of table in memory is
+        M_sz         number of keys
+        M_keys       (point to p1)
+        M_values     (p2)
+        keys start   (p1)
+        ...
+        values start (p2)
+        ...
+    */
+
+    const int32_t key_sz = sizeof(int32_t) * (8 * sz);
+    table->M_sz          = sz;
+    table->M_keys        = (int32_t**)((char*)table + sizeof(hash_table));
+    table->M_values      = (void***)((char*)table + sizeof(hash_table) + key_sz);
+
+    memset(table->M_keys, 0, key_sz);
 }
 
-void table_insert(hash_table* tbl, table_key k, void* data)
+void* table_lookup(hash_table* table, int32_t k)
 {
-    assert(tbl->M_arr[k].M_used == HASH_TABLE_FREE);
+    int32_t hashed = table_hash(table, k);
+    int32_t found  = vector_find_int(k, table->M_keys[hashed]);
 
-    tbl->M_arr[k].M_used = HASH_TABLE_INUSE;
-    tbl->M_arr[k].M_key  = k;
-    tbl->M_arr[k].M_data = data;
+    return found >= 8 ? NULL : table->M_values[hashed][found];
 }
 
-void table_remove(hash_table* tbl, table_key k)
+void table_insert(hash_table* table, int32_t k, void* data)
 {
-    assert(tbl->M_arr[k].M_used == HASH_TABLE_INUSE);
+    int32_t hashed = table_hash(table, k);
+    int32_t found  = vector_find_int(k, table->M_keys[hashed]);
 
-    memset(tbl->M_arr + k, 0, sizeof(table_node)); // defensive
-    tbl->M_arr[k].M_used = HASH_TABLE_FREE;
+    if (found >= 8) // inserting new key
+        found = vector_find_int(0, table->M_keys[hashed]);
+    assert(0 <= found && found < 8);
+
+    table->M_keys[hashed][found] = k;
+    table->M_values[hashed][found] = data;
+}
+
+void table_remove(hash_table* table, int32_t k)
+{
+    int32_t hashed = table_hash(table, k);
+    int32_t found  = vector_find_int(k, table->M_keys[hashed]);
+    assert(0 <= found && found < 8);
+
+    table->M_keys[hashed][found]   = 0;
+    table->M_values[hashed][found] = NULL;
 }
 
 void table_free(void)
 {
+    assert(1);
 }
 
 //endregion
@@ -239,6 +266,7 @@ void* collection_allocate(block_collection* collection)
 {
     uint32_t blk_index = collection_have_free_block(collection);
 
+    assert(blk_index < 256);
     if (blk_index > 256)
         return NULL;
 
@@ -597,15 +625,17 @@ void* serial_allocate(size_t sz)
 
 void serial_free(void* ptr)
 {
+    manager_lock(&allocator);
+
     collection_free(ptr);
+
+    manager_unlock(&allocator);
 }
 
 hash_table* G_table;
 
 void *mm_malloc(size_t sz)
 {
-
-
     return serial_allocate(sz);
 }
 
