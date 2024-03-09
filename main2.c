@@ -4,23 +4,43 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct hash_table_node
+void test1(void)
 {
-    short     M_used;
-    int       M_key;
-    void*     M_data;
+    const int sz = 50;
+    int* arr = (int*)mm_malloc(sizeof(int) * sz);
+    for (int i=0; i!=sz; ++i) arr[i]=i;
+    for (int i=0; i!=sz; ++i) printf("%d ", arr[i]);
+    printf("\n");
 }
-node;
 
-typedef struct S1
+void test2(void)
 {
-    char* data;
+    const int times = 37;
+    for (int i=0; i!=8*256*times; ++i)
+    {
+        int* ptr = (int*)mm_malloc(sizeof(int));
+        *ptr = i;
+        printf("%d ", *ptr);
+    }
 }
-s1;
+
+void test3(void)
+{
+    int* ptr = (int*)mm_malloc(sizeof(int));
+    *ptr = 3871;
+    mm_free(ptr);
+}
+
+void test4(void)
+{
+
+}
 
 int main(void)
 {
-
     mm_init();
+
+    test3();
+
     return 1;
 }
