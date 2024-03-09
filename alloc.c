@@ -23,7 +23,6 @@ int32_t vector_find_int(int32_t toFind, int32_t * from)
 //    int res = 8-1-_tzcnt_u32(mask);
 }
 
-
 /**
  * Find the first 1 bit in a 256 bit bitset
  * @param m256i the bitset to search
@@ -71,14 +70,11 @@ static inline __attribute__((always_inline)) int vector_find_first_gte(int32_t* 
     return trail;
 }
 
-
-
 //endregion
 // -------------------------------  Vector Instructions End   -----------------------------
 
 
 // -------------------------------  Hash Table Begin        -------------------------------
-
 //region Hash Table
 
 #define HASH_TABLE_INUSE 8
@@ -143,8 +139,8 @@ void table_free(void)
 }
 
 //endregion
-
 // -------------------------------  Hash Table End          -------------------------------
+
 
 
 #define BLOCK_NUM_TYPES 8
@@ -154,7 +150,6 @@ const ptrdiff_t BITSET_SZ[8] = {8,8, 8,  8,   4,    1,     1,      1};
 
 
 // -------------------------------  Block Collection Begin  -------------------------------
-
 //region Block Collection
 
 /**
@@ -271,13 +266,10 @@ void collection_free(void* ptr)
     collection->M_num_free             += 1;
 }
 
-
 //endregion
-
 // -------------------------------  Block Collection End    -------------------------------
 
 // -------------------------------  Block Manager Begin     -------------------------------
-
 // region Block Manager
 
 /**
@@ -364,11 +356,9 @@ void manager_unlock(block_manager* manager)
 }
 
 //endregion
-
 // -------------------------------  Block Manager End       -------------------------------
 
 // -------------------------------  Global Allocator Start  -------------------------------
-
 //region Global Allocator
 
 block_manager allocator;
@@ -516,7 +506,6 @@ void allocator_give_manager(block_manager* manager)
 }
 
 //endregion
-
 // -------------------------------  Global Allocator End    -------------------------------
 
 /*
