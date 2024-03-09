@@ -490,6 +490,10 @@ int allocator_give_collection(block_manager* manager, block_collection* collecti
     return 1;
 }
 
+/**
+ * allocate new memory for some managers and put them into
+ * the global allocator
+ */
 int allocator_force_take_manager(uint32_t num)
 {
     const size_t wanted     = sizeof(block_manager) * num;
@@ -528,6 +532,7 @@ block_manager* allocator_take_manager(void)
 void allocator_give_manager(block_manager* manager)
 {
     assert(manager->M_next==NULL);
+    assert(manager!=&allocator);
 
     manager->M_next  = allocator.M_next;
     allocator.M_next = manager;
@@ -636,7 +641,16 @@ hash_table* G_table;
 
 void *mm_malloc(size_t sz)
 {
-    return serial_allocate(sz);
+    block_manager* manager = table_lookup(G_table, pthread_self());
+
+    if (manager == NULL)
+    {
+        manager = allocator_take_manager();
+        table_insert(G_table, pthread_self(), manager);
+    }
+    assert(manager);
+
+    return serial_allocate(manager, sz);
 }
 
 void mm_free(void *ptr)
@@ -656,6 +670,11 @@ int mm_init(void)
     req[1].M_blk_sz    = BLOCK_SZ[1];
     req[1].M_num       = 8;
     allocator_force_take_collection(&allocator, req, 0);
+
+    allocator_force_take_manager(16);
+
+    block_manager* manager = allocator_take_manager();
+    table_insert(G_table, pthread_self(), manager);
 
     //block_manager* manager = allocator_take_manager();
     //table_insert(G_table, 0, manager);
