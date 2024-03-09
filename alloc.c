@@ -95,8 +95,9 @@ typedef struct memory_block_collection
     uint32_t  M_bitset_sz; // range of [1,8], have 32*bitset_sz blocks
     ptrdiff_t M_blk_sz;    // the block size
     uint32_t  M_num_free;  // number of free blocks in this collection
-    void*     M_next;      // next collection in list, NULL is end
-    void*     M_prev;      // previous collection in list
+    struct memory_block_collection
+             *M_next,      // next collection in list, NULL is end
+             *M_prev;      // previous collection in list
 }
 block_collection;
 
@@ -137,7 +138,6 @@ size_t collection_needed(uint32_t bitset_sz, ptrdiff_t blk_sz)
     return sizeof(block_collection) + ((sizeof(void*) + blk_sz) * 32*bitset_sz);
 }
 
-<<<<<<< HEAD
 /**
  * find the first block size for which sz is >= to
  */
@@ -157,7 +157,7 @@ int32_t collection_have_free_block(block_collection* collection)
     {
         for (int32_t j=31; j!=-1; --j)
         {
-            if (collection->M_bitset[i] & (1 << j)) return 32*i + (31-j);
+            if ((collection->M_bitset[i] & (1 << j))==0) return 32*i + (31-j);
         }
     }
 
@@ -176,9 +176,9 @@ void* collection_allocate(block_collection* collection)
         return NULL;
 
     char* blk_start = (char*)collection + sizeof(collection); // first block metadata
-    char* blk = blk_start + (blk_index * (collection->M_blk_sz + sizeof(block))) - sizeof(block);
+    char* blk = blk_start + (blk_index * (collection->M_blk_sz + sizeof(block))); // allocated block metadata
     ((block*)blk)->M_start = collection;
-    return  blk + 1; // after metadata
+    return  blk + sizeof(block); // after metadata
 }
 
 void collection_free(void* ptr)
@@ -191,9 +191,9 @@ void collection_free(void* ptr)
     collection->M_bitset[blk_index/32] &= ~(1 << (31 - (blk_index%32)));
 }
 
-=======
+
 //endregion
->>>>>>> 318379b98a58a836ebf4454445d8f37c8b26d01d
+
 // -------------------------------  Block Collection End    -------------------------------
 
 // -------------------------------  Block Manager Begin     -------------------------------
@@ -227,21 +227,22 @@ void manager_insert(block_manager* manager, block_collection* after, uint32_t ty
 {
     manager->M_num[type] += 1;
 
-    if (after==NULL)
+    if (after==NULL) // insert to head
     {
-        block_collection* next = manager->M_heads[type]==NULL ? NULL : manager->M_heads[type]->M_next;
+        block_collection* next = manager->M_heads[type];
         manager->M_heads[type] = new;
         new->M_next            = next;
+        if (next) next->M_prev = new;
         return;
     }
 
     block_collection* next = after->M_next;
     block_collection* prev = after->M_prev;
 
-    new->M_next  = next;
-    new->M_prev  = prev;
-    next->M_prev = new;
-    prev->M_next = new;
+    new->M_next            = next;
+    new->M_prev            = prev;
+    if (next) next->M_prev = new; // tail
+    prev->M_next           = new;
 }
 
 /**
@@ -249,26 +250,28 @@ void manager_insert(block_manager* manager, block_collection* after, uint32_t ty
  */
 void manager_erase(block_manager* manager, uint32_t type, block_collection* node)
 {
-    // edge case for head
+    manager->M_num[type] -= 1;
+
+    // head
     if (node==manager->M_heads[type])
     {
         manager->M_heads[type] = node->M_next;
+        
+        node->M_prev = NULL;
+        node->M_next = NULL;
         return;
     }
 
-    block_collection* prev = manager->M_heads[type]->M_prev;
-    block_collection* next = manager->M_heads[type]->M_next;
+    block_collection* prev = node->M_prev;
+    block_collection* next = node->M_next;
 
-    prev->M_next = next;
-    next->M_prev = prev;
+    prev->M_next           = next;
+    if (next) next->M_prev = prev;
 
     node->M_next = NULL;
     node->M_prev = NULL;
-
-    manager->M_num[type] -= 1;
 }
 
-<<<<<<< HEAD
 void manager_lock(block_manager* manager)
 {
 }
@@ -278,9 +281,8 @@ void manager_unlock(block_manager* manager)
     
 }
 
-=======
 //endregion
->>>>>>> 318379b98a58a836ebf4454445d8f37c8b26d01d
+
 // -------------------------------  Block Manager End       -------------------------------
 
 // -------------------------------  Global Allocator Start  -------------------------------
