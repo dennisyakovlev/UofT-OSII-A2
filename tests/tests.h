@@ -4,3 +4,5 @@ void run_basic();
 
 void run_unique();
 
+void run_multibasic();
+

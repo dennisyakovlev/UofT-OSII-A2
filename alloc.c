@@ -347,11 +347,12 @@ void manager_erase(block_manager* manager, uint32_t type, block_collection* node
 
 void manager_lock(block_manager* manager)
 {
+    pthread_mutex_lock(&manager->M_lock);
 }
 
 void manager_unlock(block_manager* manager)
 {
-
+    pthread_mutex_unlock(&manager->M_lock);
 }
 
 //endregion
@@ -575,6 +576,8 @@ void* serial_allocate(size_t sz)
 
      */
 
+    manager_lock(&allocator);
+
     const uint32_t type = collection_find_type(sz);
     if (allocator.M_num[type] == 0 || allocator.M_heads[type]->M_num_free == 0)
     {
@@ -585,7 +588,11 @@ void* serial_allocate(size_t sz)
         allocator_force_take_collection(&allocator, req, 0);
     }
 
-    return collection_allocate(allocator.M_heads[type]);
+    void* ptr = collection_allocate(allocator.M_heads[type]);
+
+    manager_unlock(&allocator);
+
+    return ptr;
 }
 
 void serial_free(void* ptr)
@@ -597,17 +604,9 @@ hash_table* G_table;
 
 void *mm_malloc(size_t sz)
 {
+
+
     return serial_allocate(sz);
-
-// get block manager for this thread
-// get block_manager from hashmap using tid
-// find corresponding block size for allocation
-// check all the block collections
-// found -> update bit set, set M_start and return
-// else take from allocator
-
-	(void)sz; /* Avoid warning about unused variable */
-	return NULL;
 }
 
 void mm_free(void *ptr)

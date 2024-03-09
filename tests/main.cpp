@@ -7,5 +7,6 @@ int main()
 
     run_basic();
     run_unique();
+    run_multibasic();
 }
 
