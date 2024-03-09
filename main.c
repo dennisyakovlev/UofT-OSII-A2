@@ -65,8 +65,8 @@ int main()
 //    int res2 = vector_find_first_0_bit(nums2);
 //    printf("%d\n", res2);
 
-    int32_t nums3[8] = {1,2,3,4,5,6,7,8};
-    int res3 = vector_find_int(4, nums3);
-    printf("%d\n", res3);
+//    int32_t nums3[8] = {1,2,3,4,5,6,7,8};
+//    int res3 = vector_find_int(4, nums3);
+//    printf("%d\n", res3);
 }
 
