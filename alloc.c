@@ -14,13 +14,13 @@
 
 int32_t vector_find_int(int32_t toFind, int32_t * from)
 {
-    __m256i arr8 = _mm256_load_si256((__m256i *)from);
+    __m256i arr8 = _mm256_lddqu_si256((__m256i *)from);
     __m256i num8 = _mm256_set1_epi32(toFind);
 
     __m256i cmp = _mm256_cmpeq_epi32(arr8, num8);
     __m256 cmp_ps = _mm256_castsi256_ps(cmp);
-//    int mask = _mm256_movemask_ps(cmp_ps);
-//    int res = 8-1-_tzcnt_u32(mask);
+    int mask = _mm256_movemask_ps(cmp_ps);
+    return _tzcnt_u32(mask);
 }
 
 /**
@@ -56,9 +56,9 @@ static inline __attribute__((always_inline)) int vector_find_first_0_bit(const v
  * Find the first element in the array that is greater than or equal to the number
  * @param array Array of 8 32 bit integers
  * @param num The number to compare with
- * @return The index of the first element in the array which is >= num, or 8 if no such element exists
+ * @return The index of the first element in the array which is >= num, or >=8 if no such element exists
  */
-static inline __attribute__((always_inline)) int vector_find_first_gte(int32_t* array, int32_t num)
+static inline __attribute__((always_inline)) int vector_find_first_gte(const int32_t* array, int32_t num)
 {
     __m256i sizes = _mm256_lddqu_si256((__m256i *)array);
     __m256i num8 = _mm256_set1_epi32(num - 1);  // minus one to deal with gte

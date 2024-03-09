@@ -38,6 +38,7 @@ int vec_index(__m128i arr, __m128i look_for)
 
 int vector_find_first_gte(int32_t* nums, int32_t num);
 int vector_find_first_0_bit(const void *m256);
+int32_t vector_find_int(int32_t toFind, int32_t * from);
 
 int main()
 {
@@ -55,13 +56,17 @@ int main()
 //    int mask = _mm256_movemask_ps(cmp_ps);
 //    int res = 8-1-_tzcnt_u32(mask);
 //    printf("%d\n", res);
+//
+//    int nums[8] = {2,4,8,16,32,64,128,256};
+//    int res = vector_find_first_gte(nums, 32);
+//    printf("%d\n", res);
+//
+//    uint32_t nums2[8] = {0xFFFFFFFF,0xFFFFFFFF - (1<<3),0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF};
+//    int res2 = vector_find_first_0_bit(nums2);
+//    printf("%d\n", res2);
 
-    int nums[8] = {2,4,8,16,32,64,128,256};
-    int res = vector_find_first_gte(nums, 32);
-    printf("%d\n", res);
-
-    uint32_t nums2[8] = {0xFFFFFFFF,0xFFFFFFFF - (1<<3),0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF,0xFFFFFFFF};
-    int res2 = vector_find_first_0_bit(nums2);
-    printf("%d\n", res2);
+    int32_t nums3[8] = {1,2,3,4,5,6,7,8};
+    int res3 = vector_find_int(4, nums3);
+    printf("%d\n", res3);
 }
 
