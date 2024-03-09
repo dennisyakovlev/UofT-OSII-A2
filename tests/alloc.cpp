@@ -5,10 +5,75 @@
 #include <alloc.h>
 #include <string.h>
 
+#include <immintrin.h>
+
 #include <assert.h>
 
-// -------------------------------  Hash Table Begin        -------------------------------
+// -------------------------------  Vector Instructions Begin  ----------------------------
+//region Vector Instructions
 
+int32_t vector_find_int(int32_t toFind, int32_t * from)
+{
+    __m256i arr8 = _mm256_load_si256((__m256i *)from);
+    __m256i num8 = _mm256_set1_epi32(toFind);
+
+    __m256i cmp = _mm256_cmpeq_epi32(arr8, num8);
+    __m256 cmp_ps = _mm256_castsi256_ps(cmp);
+//    int mask = _mm256_movemask_ps(cmp_ps);
+//    int res = 8-1-_tzcnt_u32(mask);
+}
+
+/**
+ * Find the first 1 bit in a 256 bit bitset
+ * @param m256i the bitset to search
+ * @return index of the first 1 bit, or 256 if no 1 bit is found
+ */
+static inline __attribute__((always_inline)) int vector_find_first_1_bit(const __m256i* m256i)
+{
+    __m256i cmp = _mm256_cmpeq_epi32(*m256i, _mm256_setzero_si256()); // compare with zero to find the first non-zero 32bit group
+    uint8_t zero_mask = _mm256_movemask_ps(_mm256_castsi256_ps(cmp)); // mask of zero 32bit groups
+    uint8_t nonzero_mask = ~ zero_mask; // bitwise not the mask, 1 means non-zero 32bit group in the bitset
+
+    if (nonzero_mask == 0)
+    {
+        return 256;  // none of the groups have 1, so all bits are zero in the bitset
+    }
+
+    uint32_t idx_first_1_group = _tzcnt_u32(nonzero_mask);  // first non-zero 32bit group
+    uint32_t first_1_group = ((uint32_t*)m256i)[idx_first_1_group];  // get the first non-zero 32bit group
+    uint32_t idx_first_1 = _tzcnt_u32(first_1_group);  // find the first 1 in the first non-zero 32bit group
+    return 32 * idx_first_1_group + idx_first_1;  // combine the index
+}
+
+static inline __attribute__((always_inline)) int vector_find_first_0_bit(const void *m256)
+{
+    __m256i inverted_bitset = ~ _mm256_lddqu_si256((const __m256i*)m256); // invert the bitset to find the first 1
+    int result = vector_find_first_1_bit(&inverted_bitset);
+    return result;
+}
+
+/**
+ * Find the first element in the array that is greater than or equal to the number
+ * @param array Array of 8 32 bit integers
+ * @param num The number to compare with
+ * @return The index of the first element in the array which is >= num, or 8 if no such element exists
+ */
+static inline __attribute__((always_inline)) int vector_find_first_gte(int32_t* array, int32_t num)
+{
+    __m256i sizes = _mm256_lddqu_si256((__m256i *)array);
+    __m256i num8 = _mm256_set1_epi32(num - 1);  // minus one to deal with gte
+
+    __m256i result = _mm256_cmpgt_epi32(sizes, num8);
+    __m256 cmp_ps = _mm256_castsi256_ps(result);
+    int mask = _mm256_movemask_ps(cmp_ps);
+    uint32_t trail = _tzcnt_u32(mask);
+    return trail;
+}
+
+//endregion
+// -------------------------------  Vector Instructions End   -----------------------------
+
+// -------------------------------  Hash Table Begin        -------------------------------
 //region Hash Table
 
 #define HASH_TABLE_INUSE 8
@@ -73,8 +138,8 @@ void table_free(void)
 }
 
 //endregion
-
 // -------------------------------  Hash Table End          -------------------------------
+
 
 
 #define BLOCK_NUM_TYPES 8
@@ -84,7 +149,6 @@ const ptrdiff_t BITSET_SZ[8] = {8,8, 8,  8,   4,    1,     1,      1};
 
 
 // -------------------------------  Block Collection Begin  -------------------------------
-
 //region Block Collection
 
 /**
@@ -201,13 +265,10 @@ void collection_free(void* ptr)
     collection->M_num_free             += 1;
 }
 
-
 //endregion
-
 // -------------------------------  Block Collection End    -------------------------------
 
 // -------------------------------  Block Manager Begin     -------------------------------
-
 // region Block Manager
 
 /**
@@ -219,6 +280,7 @@ the thread which owns the manager has exclusive access to
 typedef struct memory_block_manager
 {
     block_collection*            M_heads[BLOCK_NUM_TYPES]; // heads of lists to held collection type
+    block_collection*            M_sep[BLOCK_NUM_TYPES];   // the last node in a list that still has space
     uint32_t                     M_num[BLOCK_NUM_TYPES];   // currently held of each collection type
     struct memory_block_manager* M_next;
     pthread_mutex_t              M_lock;
@@ -267,7 +329,7 @@ void manager_erase(block_manager* manager, uint32_t type, block_collection* node
     if (node==manager->M_heads[type])
     {
         manager->M_heads[type] = node->M_next;
-        
+
         node->M_prev = NULL;
         node->M_next = NULL;
         return;
@@ -289,15 +351,13 @@ void manager_lock(block_manager* manager)
 
 void manager_unlock(block_manager* manager)
 {
-    
+
 }
 
 //endregion
-
 // -------------------------------  Block Manager End       -------------------------------
 
 // -------------------------------  Global Allocator Start  -------------------------------
-
 //region Global Allocator
 
 block_manager allocator;
@@ -445,7 +505,6 @@ void allocator_give_manager(block_manager* manager)
 }
 
 //endregion
-
 // -------------------------------  Global Allocator End    -------------------------------
 
 /*
@@ -463,6 +522,59 @@ void allocator_give_manager(block_manager* manager)
 
 void* serial_allocate(size_t sz)
 {
+    /*
+
+     // find the block head with a good size
+    if (sz > BLOCK_SZ[BLOCK_NUM_TYPES - 1]) {
+        // To large
+        // TODO large blocks special case
+        return NULL;
+    }
+
+    // TODO: use vector instructions
+    uint32_t type = 0;
+    for (;type < BLOCK_NUM_TYPES; type++)
+    {
+        if (sz <= BLOCK_SZ[type]) {
+            // found it
+            break;
+        }
+    }
+
+    // find a node with free blocks
+//    block_collection* prev = NULL;
+//    block_collection* curr = manager->M_heads[type];
+//    while (curr != NULL && curr->M_num_free > 0)
+//    {
+//        prev = curr;
+//        curr = curr->M_next;
+//    }
+//
+//    block_collection* collection = curr;
+//    if (curr == NULL || prev == NULL)
+    block_collection* collection = manager->M_heads[type];
+    if (collection == NULL || collection->M_num_free == 0)
+    {
+//        // all nodes are full or the head is NULL
+//        collection_info req[]
+//        // allocate a new node, it will be placed at the head
+//        int result = allocator_take_collection(manager, );
+//        if (result != 0) {
+//            return NULL;
+//        }
+//        collection = manager->M_heads[type];
+    }
+
+    //find the first free block in this node
+    //TODO: use vector instructions
+
+
+
+
+
+
+     */
+
     const uint32_t type = collection_find_type(sz);
     if (allocator.M_num[type] == 0 || allocator.M_heads[type]->M_num_free == 0)
     {

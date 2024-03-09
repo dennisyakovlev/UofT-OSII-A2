@@ -73,7 +73,6 @@ static inline __attribute__((always_inline)) int vector_find_first_gte(int32_t* 
 //endregion
 // -------------------------------  Vector Instructions End   -----------------------------
 
-
 // -------------------------------  Hash Table Begin        -------------------------------
 //region Hash Table
 

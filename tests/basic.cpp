@@ -35,8 +35,6 @@ void basic_3()
 
 void run_basic()
 {
-    mm_init();
-
     basic_1();
     basic_2();
     basic_3();

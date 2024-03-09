@@ -1,7 +1,7 @@
 CC = g++
-CC_FLAGS = -I.
+CC_FLAGS = -I. -march=native
 DEPS = tests.h alloc.h
-OBJS = basic.o alloc.o
+OBJS = basic.o unique.o alloc.o
 
 .PHONY: clean copy test_phony
 
