@@ -175,20 +175,27 @@ void* collection_allocate(block_collection* collection)
     if (blk_index > 256)
         return NULL;
 
-    char* blk_start = (char*)collection + sizeof(collection); // first block metadata
+    collection->M_bitset[blk_index/32] |= 1 << (31 - (blk_index%32));
+    collection->M_num_free             -= 1;
+
+    char* blk_start = (char*)collection + sizeof(block_collection); // first block metadata
     char* blk = blk_start + (blk_index * (collection->M_blk_sz + sizeof(block))); // allocated block metadata
     ((block*)blk)->M_start = collection;
     return  blk + sizeof(block); // after metadata
 }
 
+/**
+ * free a pointer from a collection
+ */
 void collection_free(void* ptr)
 {
     char* blk = (char*)ptr - sizeof(block);
     block_collection* collection = ((block*)blk)->M_start;
-    char* blk_start = (char*)collection + sizeof(collection);
+    char* blk_start = (char*)collection + sizeof(block_collection);
     uint32_t blk_index = (blk - blk_start) / (sizeof(block) + collection->M_blk_sz);
 
     collection->M_bitset[blk_index/32] &= ~(1 << (31 - (blk_index%32)));
+    collection->M_num_free             += 1;
 }
 
 
@@ -463,6 +470,10 @@ void* serial_allocate(size_t sz)
     return collection_allocate(allocator.M_heads[type]);
 }
 
+void serial_free(void* ptr)
+{
+    collection_free(ptr);
+}
 
 hash_table* G_table;
 
@@ -483,7 +494,7 @@ void *mm_malloc(size_t sz)
 
 void mm_free(void *ptr)
 {
-	(void)ptr; /* Avoid warning about unused variable */
+    collection_free(ptr);
 }
 
 int mm_init(void)
