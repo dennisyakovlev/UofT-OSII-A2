@@ -598,11 +598,12 @@ void* serial_allocate(block_manager* manager, size_t sz)
     manager_lock(manager);
 
     block_collection* collection = manager->M_heads[type];
-    if (manager->M_num[type] == 0 || collection->M_num_free == 0)
-    {
-        assert(collection == NULL);
-        // all nodes are full or the head is NULL
 
+    assert(collection == NULL ^ manager->M_num[type] == 0);
+
+    if (collection == NULL || collection->M_num_free == 0)
+    {
+        // all nodes are full or the head is NULL
         collection_info req[8] = {0};
         req[type].M_bitset_sz  = BITSET_SZ[type];
         req[type].M_blk_sz     = BLOCK_SZ[type];
