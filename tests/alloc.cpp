@@ -9,18 +9,24 @@
 
 #include <assert.h>
 
+struct fast_hash_table;
+struct memory_block_collection;
+struct memory_block_manager;
+
+typedef struct memory_block_manager block_manager;
+
 // -------------------------------  Vector Instructions Begin  ----------------------------
 //region Vector Instructions
 
-int32_t vector_find_int(int32_t toFind, int32_t * from)
+static inline __attribute__((always_inline)) int32_t vector_find_int(int32_t toFind, int32_t * from)
 {
-    __m256i arr8 = _mm256_load_si256((__m256i *)from);
+    __m256i arr8 = _mm256_lddqu_si256((__m256i *)from);
     __m256i num8 = _mm256_set1_epi32(toFind);
 
     __m256i cmp = _mm256_cmpeq_epi32(arr8, num8);
     __m256 cmp_ps = _mm256_castsi256_ps(cmp);
-//    int mask = _mm256_movemask_ps(cmp_ps);
-//    int res = 8-1-_tzcnt_u32(mask);
+    int mask = _mm256_movemask_ps(cmp_ps);
+    return _tzcnt_u32(mask);
 }
 
 /**
@@ -45,7 +51,7 @@ static inline __attribute__((always_inline)) int vector_find_first_1_bit(const _
     return 32 * idx_first_1_group + idx_first_1;  // combine the index
 }
 
-static inline __attribute__((always_inline)) int vector_find_first_0_bit(const void *m256)
+static inline __attribute__((always_inline)) int vector_find_first_0_bit(const uint32_t *m256)
 {
     __m256i inverted_bitset = ~ _mm256_lddqu_si256((const __m256i*)m256); // invert the bitset to find the first 1
     int result = vector_find_first_1_bit(&inverted_bitset);
@@ -56,9 +62,9 @@ static inline __attribute__((always_inline)) int vector_find_first_0_bit(const v
  * Find the first element in the array that is greater than or equal to the number
  * @param array Array of 8 32 bit integers
  * @param num The number to compare with
- * @return The index of the first element in the array which is >= num, or 8 if no such element exists
+ * @return The index of the first element in the array which is >= num, or >=8 if no such element exists
  */
-static inline __attribute__((always_inline)) int vector_find_first_gte(int32_t* array, int32_t num)
+static inline __attribute__((always_inline)) int vector_find_first_gte(const int32_t* array, int32_t num)
 {
     __m256i sizes = _mm256_lddqu_si256((__m256i *)array);
     __m256i num8 = _mm256_set1_epi32(num - 1);  // minus one to deal with gte
@@ -84,8 +90,8 @@ static inline __attribute__((always_inline)) int vector_find_first_gte(int32_t* 
  */
 typedef struct fast_hash_table
 {
-    int32_t   M_sz;
-    int32_t** M_keys;    // 1d array treated as 2d array of size n*8
+    int32_t    M_sz;
+    int32_t**  M_keys;    // 1d array treated as 2d array of size n*8
     void***    M_values;  // 1d array treated as 2d array of size n*8
 }
 hash_table;
@@ -170,8 +176,8 @@ void table_free(void)
 
 
 #define BLOCK_NUM_TYPES 8
-const ptrdiff_t BLOCK_SZ[8]  = {8,64,256,1024,16384,262144,4194304,67108864};
-const ptrdiff_t BITSET_SZ[8] = {8,8, 8,  8,   4,    1,     1,      1};
+const int32_t BLOCK_SZ[8]  = {8,64,256,1024,16384,262144,4194304,67108864};
+const int32_t BITSET_SZ[8] = {8,8, 8,  8,   4,    1,     1,      1};
 
 
 
@@ -186,12 +192,13 @@ a block collection is a contiguous set of memory where
 typedef struct memory_block_collection
 {
     uint32_t  M_bitset[8];
-    uint32_t  M_bitset_sz; // range of [1,8], have 32*bitset_sz blocks
-    ptrdiff_t M_blk_sz;    // the block size
+    int32_t   M_blk_sz;    // the block size
     uint32_t  M_num_free;  // number of free blocks in this collection
     struct memory_block_collection
              *M_next,      // next collection in list, NULL is end
              *M_prev;      // previous collection in list
+    struct memory_block_manager
+             *M_owner;
 }
 block_collection;
 
@@ -204,22 +211,20 @@ typedef struct memory_block
 }
 block;
 
-void collection_init(void* mem, uint32_t bitset_sz, ptrdiff_t block_sz)
+void collection_init(block_collection* collection, block_manager* owner, int32_t bitset_sz, int32_t block_sz)
 {
     assert(1<=bitset_sz && bitset_sz<=8);
 
-    block_collection* collection = (block_collection*)mem;
-
-    memset(collection->M_bitset, 0, sizeof(uint32_t) * 8);
-    collection->M_bitset_sz = bitset_sz;
+    memset(collection->M_bitset, 0, sizeof(int32_t) * 8);
     collection->M_blk_sz    = block_sz;
     collection->M_num_free  = 32 * bitset_sz;
     collection->M_next      = NULL;
     collection->M_prev      = NULL;
+    collection->M_owner     = owner;
 }
 
 //inline __attribute__ ((always_inline))
-size_t collection_needed(uint32_t bitset_sz, ptrdiff_t blk_sz)
+int32_t collection_needed(int32_t bitset_sz, int32_t blk_sz)
 {
     if (bitset_sz==0 || blk_sz==0)
     {
@@ -237,25 +242,17 @@ size_t collection_needed(uint32_t bitset_sz, ptrdiff_t blk_sz)
  */
 int32_t collection_find_type(int32_t sz)
 {
-    int32_t i = 0;
-    for (; sz>BLOCK_SZ[i]; ++i);
-    return i;
-}
-
-/**
- * find a free block if it exists
- */
-int32_t collection_have_free_block(block_collection* collection)
-{
-    for (int32_t i=0; i!=BLOCK_NUM_TYPES; ++i)
-    {
-        for (int32_t j=31; j!=-1; --j)
-        {
-            if ((collection->M_bitset[i] & (1 << j))==0) return 32*i + (31-j);
-        }
+    if (sz > BLOCK_SZ[BLOCK_NUM_TYPES - 1]) {
+        // To large
+        // TODO large blocks special case
+        return -1;
     }
 
-    return 256 + 1;
+    int32_t type = vector_find_first_gte(BLOCK_SZ, sz);
+
+    assert(type < BLOCK_NUM_TYPES);
+
+    return type;
 }
 
 /**
@@ -264,19 +261,32 @@ int32_t collection_have_free_block(block_collection* collection)
  */
 void* collection_allocate(block_collection* collection)
 {
-    uint32_t blk_index = collection_have_free_block(collection);
+    uint32_t index = vector_find_first_0_bit(collection->M_bitset);
 
-    assert(blk_index < 256);
-    if (blk_index > 256)
+    if (index >= 256)
+    {
+        assert(collection->M_num_free == 0);
         return NULL;
+    }
 
-    collection->M_bitset[blk_index/32] |= 1 << (31 - (blk_index%32));
+    assert(collection->M_num_free != 0);
+
+    uint32_t group_index = index / 32;
+    uint32_t blk_index   = index % 32;
+
+    collection->M_bitset[group_index]  |= 1 << (blk_index % 32);
     collection->M_num_free             -= 1;
 
     char* blk_start = (char*)collection + sizeof(block_collection); // first block metadata
-    char* blk = blk_start + (blk_index * (collection->M_blk_sz + sizeof(block))); // allocated block metadata
+    char* blk = blk_start + (index * (collection->M_blk_sz + sizeof(block))); // allocated block metadata
     ((block*)blk)->M_start = collection;
-    return  blk + sizeof(block); // after metadata
+    return blk + sizeof(block); // after metadata
+}
+
+block_collection* collection_from_ptr(void* ptr)
+{
+    char* blk = (char*)ptr - sizeof(block);
+    return ((block*)blk)->M_start;
 }
 
 /**
@@ -289,7 +299,7 @@ void collection_free(void* ptr)
     char* blk_start = (char*)collection + sizeof(block_collection);
     uint32_t blk_index = (blk - blk_start) / (sizeof(block) + collection->M_blk_sz);
 
-    collection->M_bitset[blk_index/32] &= ~(1 << (31 - (blk_index%32)));
+    collection->M_bitset[blk_index/32] &= ~(1 << (blk_index%32));
     collection->M_num_free             += 1;
 }
 
@@ -309,6 +319,7 @@ typedef struct memory_block_manager
 {
     block_collection*            M_heads[BLOCK_NUM_TYPES]; // heads of lists to held collection type
     block_collection*            M_sep[BLOCK_NUM_TYPES];   // the last node in a list that still has space
+    block_collection*            M_tails[BLOCK_NUM_TYPES]; // the last node of each list
     uint32_t                     M_num[BLOCK_NUM_TYPES];   // currently held of each collection type
     struct memory_block_manager* M_next;
     pthread_mutex_t              M_lock;
@@ -326,14 +337,23 @@ void manager_init(block_manager* manager)
  */
 void manager_insert(block_manager* manager, block_collection* after, uint32_t type, block_collection* insert)
 {
+    assert(after != insert);
+    assert(insert->M_owner == manager || insert->M_owner == NULL);
+    assert(insert->M_prev == NULL);
+    assert(insert->M_next == NULL);
+
     manager->M_num[type] += 1;
+    insert->M_owner       = manager;
+
+    if (manager->M_tails[type] == after) // update tail
+        manager->M_tails[type] = insert;
 
     if (after==NULL) // insert to head
     {
         block_collection* next = manager->M_heads[type];
         manager->M_heads[type] = insert;
         insert->M_next         = next;
-        if (next) next->M_prev = insert;
+        if (next) next->M_prev = insert; // size > 1
         return;
     }
 
@@ -353,13 +373,16 @@ void manager_erase(block_manager* manager, uint32_t type, block_collection* node
 {
     manager->M_num[type] -= 1;
 
-    // head
-    if (node==manager->M_heads[type])
+    if (node == manager->M_tails[type]) // update the tail
+        manager->M_tails[type] = node->M_prev;
+
+    if (node == manager->M_heads[type]) // erase head
     {
         manager->M_heads[type] = node->M_next;
 
-        node->M_prev = NULL;
-        node->M_next = NULL;
+        node->M_prev  = NULL;
+        node->M_next  = NULL;
+        node->M_owner = NULL;
         return;
     }
 
@@ -369,8 +392,9 @@ void manager_erase(block_manager* manager, uint32_t type, block_collection* node
     prev->M_next           = next;
     if (next) next->M_prev = prev;
 
-    node->M_next = NULL;
-    node->M_prev = NULL;
+    node->M_next  = NULL;
+    node->M_prev  = NULL;
+    node->M_owner = NULL;
 }
 
 void manager_lock(block_manager* manager)
@@ -392,19 +416,19 @@ void manager_unlock(block_manager* manager)
 block_manager allocator;
 
 /**
-structure to give to allocator on request
-
-*/
+ * structure to give to allocator on request
+ */
 typedef struct memory_collection_info
 {
-    uint32_t  M_bitset_sz;
-    ptrdiff_t M_blk_sz;
-    uint32_t  M_num;       // number of this collection wanted
+    int32_t  M_bitset_sz;
+    int32_t  M_blk_sz;
+    int32_t  M_num;       // number of this collection wanted
 }
 collection_info;
 
 /**
  * forcefully allocate memory from OS and put it into given manager
+ * the collection will be inserted as the head
  */
 int allocator_force_take_collection(block_manager* into, collection_info* req, size_t size)
 {
@@ -419,17 +443,17 @@ int allocator_force_take_collection(block_manager* into, collection_info* req, s
         }
     }
 
-    char* ptr = (char*)malloc(size);
+    char* ptr = (char*)malloc(size); //TODO: use sbrk
     if (!ptr) return 1;
 
     // init the blocks, give to into
-    for (uint32_t type=0; type!=BLOCK_NUM_TYPES; ++type)
+    for (int32_t type = 0; type != BLOCK_NUM_TYPES; ++type)
     {
-        const ptrdiff_t collection_sz = collection_needed(req[type].M_bitset_sz, req[type].M_blk_sz);
-        for (uint32_t j=0; j!=req[type].M_num; ++j, ptr+=collection_sz)
+        const int32_t collection_sz = collection_needed(req[type].M_bitset_sz, req[type].M_blk_sz);
+        for (int32_t j = 0; j != req[type].M_num; ++j, ptr += collection_sz)
         {
-            collection_init(ptr, req[type].M_bitset_sz, req[type].M_blk_sz);
-            manager_insert(into, NULL, type, (block_collection*)ptr);
+            collection_init((block_collection*)ptr, into, req[type].M_bitset_sz, req[type].M_blk_sz);
+            manager_insert(into, NULL, type, (block_collection *) ptr);
         }
     }
 
@@ -437,21 +461,28 @@ int allocator_force_take_collection(block_manager* into, collection_info* req, s
 }
 
 /**
-request collections using the info struct from the global allocator. there are BLOCK_NUM_TYPES
-    info structs. the lists of collections corresponding to request will be set as the head of
-    the corresponding lists in the into, with any free collections being taken from from
-*/
-int allocator_take_collection(block_manager* into, collection_info* req)
+ * request collections using the info struct from the global allocator. there are BLOCK_NUM_TYPES
+ * info structs. the lists of collections corresponding to request will be set as the head of
+ * the corresponding lists in the into, with any free collections being taken from from
+ *
+ * Note: <into> should be already locked
+ *
+ * @param into
+ * @param req
+ * @return
+ */
+int allocator_take_collection(block_manager *into, collection_info *req)
 {
-    // TODO: maybe skipped list approximation optmization
-
-    size_t size=0;
-    for (uint32_t type=0; type!=BLOCK_NUM_TYPES; ++type)
+    // TODO: maybe skipped list approximation optimization
+    manager_lock(&allocator);
+    size_t size = 0;
+    for (uint32_t type = 0; type != BLOCK_NUM_TYPES; ++type)
     {
         // add any collections already have in from to into
-        for (; req[type].M_num!=0 && allocator.M_num[type]!=0;)
+        for (; req[type].M_num != 0 && allocator.M_num[type] != 0;)
         {
-            block_collection* head = allocator.M_heads[type];
+            //TODO: tail
+            block_collection *head = allocator.M_heads[type];
             manager_erase(&allocator, type, head);
             manager_insert(into, NULL, type, head);
 
@@ -460,12 +491,12 @@ int allocator_take_collection(block_manager* into, collection_info* req)
 
         // any block collections that from doesn't already have should
         // be requested from the OS
-        size+=collection_needed(req[type].M_bitset_sz, req[type].M_blk_sz) * req[type].M_num;
+        size += collection_needed(req[type].M_bitset_sz, req[type].M_blk_sz) * req[type].M_num;
     }
 
-    if (size==0) return 0; // from had all requested blocks
-
-    return allocator_force_take_collection(into, req, size);
+    int ret = size == 0 ? 0 : allocator_force_take_collection(into, req, size);
+    manager_unlock(&allocator);
+    return ret;
 }
 
 /**
@@ -475,11 +506,12 @@ int allocator_take_collection(block_manager* into, collection_info* req)
 int allocator_give_collection(block_manager* manager, block_collection* collection)
 {
     // insert block collection at start
-    // need to conver to index
+    // need to convert to index
     for (uint32_t type=0; type!=BLOCK_NUM_TYPES; ++type)
     {
         if (collection->M_blk_sz==BLOCK_SZ[type])
         {
+            //TODO: use manager insert
             block_collection* next = manager->M_heads[type];
             manager->M_heads[type] = collection;
             manager->M_heads[type]->M_next = next;
@@ -490,6 +522,10 @@ int allocator_give_collection(block_manager* manager, block_collection* collecti
     return 1;
 }
 
+/**
+ * allocate new memory for some managers and put them into
+ * the global allocator
+ */
 int allocator_force_take_manager(uint32_t num)
 {
     const size_t wanted     = sizeof(block_manager) * num;
@@ -528,6 +564,7 @@ block_manager* allocator_take_manager(void)
 void allocator_give_manager(block_manager* manager)
 {
     assert(manager->M_next==NULL);
+    assert(manager!=&allocator);
 
     manager->M_next  = allocator.M_next;
     allocator.M_next = manager;
@@ -536,112 +573,101 @@ void allocator_give_manager(block_manager* manager)
 //endregion
 // -------------------------------  Global Allocator End    -------------------------------
 
-/*
-   NOTE: instead of moving "has blocks" to front, move "full" to back
-   since moving has block to front, on next search will need to go back to where the moved
-   block was.
 
-   alloc -> full send to back
-   free -> full to not full -> send to front
-
-   when alloc in serial
-   if (first collection is full) => need more mem
-   else just allocate into the first collection
-*/
-
-void* serial_allocate(size_t sz)
+/**
+ * NOTE: instead of moving "has blocks" to front, move "full" to back
+ * since moving has block to front, on next search will need to go back to where the moved
+ * block was.
+ *
+ * alloc -> full send to back
+ * free -> full to not full -> insert it behind the last non-full collection
+ *
+ * when alloc in serial
+ *
+ * if (first collection is full) => need more mem
+ * else just allocate into the first collection
+ * @param sz size of memory to allocate
+ * @return pointer to the allocated memory, NULL if OOM
+ */
+void* serial_allocate(block_manager* manager, size_t sz)
 {
-    /*
-
-     // find the block head with a good size
-    if (sz > BLOCK_SZ[BLOCK_NUM_TYPES - 1]) {
-        // To large
-        // TODO large blocks special case
-        return NULL;
-    }
-
-    // TODO: use vector instructions
-    uint32_t type = 0;
-    for (;type < BLOCK_NUM_TYPES; type++)
-    {
-        if (sz <= BLOCK_SZ[type]) {
-            // found it
-            break;
-        }
-    }
-
-    // find a node with free blocks
-//    block_collection* prev = NULL;
-//    block_collection* curr = manager->M_heads[type];
-//    while (curr != NULL && curr->M_num_free > 0)
-//    {
-//        prev = curr;
-//        curr = curr->M_next;
-//    }
-//
-//    block_collection* collection = curr;
-//    if (curr == NULL || prev == NULL)
-    block_collection* collection = manager->M_heads[type];
-    if (collection == NULL || collection->M_num_free == 0)
-    {
-//        // all nodes are full or the head is NULL
-//        collection_info req[]
-//        // allocate a new node, it will be placed at the head
-//        int result = allocator_take_collection(manager, );
-//        if (result != 0) {
-//            return NULL;
-//        }
-//        collection = manager->M_heads[type];
-    }
-
-    //find the first free block in this node
-    //TODO: use vector instructions
-
-
-
-
-
-
-     */
-
-    manager_lock(&allocator);
-
+    // find the block head with a good size
     const uint32_t type = collection_find_type(sz);
-    if (allocator.M_num[type] == 0 || allocator.M_heads[type]->M_num_free == 0)
+    // TODO type == -1 special case
+
+    manager_lock(manager);
+
+    block_collection* collection = manager->M_heads[type];
+    if (manager->M_num[type] == 0 || collection->M_num_free == 0)
     {
+        assert(collection == NULL);
+        // all nodes are full or the head is NULL
+
         collection_info req[8] = {0};
         req[type].M_bitset_sz  = BITSET_SZ[type];
         req[type].M_blk_sz     = BLOCK_SZ[type];
         req[type].M_num        = 8;
-        allocator_force_take_collection(&allocator, req, 0);
+
+        // allocate a new node, it will be placed at the head
+        int result = allocator_take_collection(manager, req);
+        if (result != 0) {
+            return NULL;
+        }
+        collection = manager->M_heads[type];
     }
 
-    void* ptr = collection_allocate(allocator.M_heads[type]);
+    assert(collection != NULL);
 
-    manager_unlock(&allocator);
+    //find the first free block in this node
+    void* ptr = collection_allocate(collection);
+    assert(ptr != NULL);
+
+    // check if it is full
+    if (collection->M_num_free == 0 && collection != manager->M_tails[type])
+    {
+        // move it to the end
+        manager_erase(manager, type, collection);
+        manager_insert(manager, manager->M_tails[type], type, collection);
+    }
+
+    manager_unlock(manager);
 
     return ptr;
 }
 
 void serial_free(void* ptr)
 {
-    manager_lock(&allocator);
+    block_collection* collection = collection_from_ptr(ptr);
+    block_manager* manager       = collection->M_owner;
+
+    manager_lock(manager);
 
     collection_free(ptr);
 
-    manager_unlock(&allocator);
+    // if collection is now not full, move to front of fulls
+
+    manager_unlock(manager);
 }
 
 hash_table* G_table;
 
 void *mm_malloc(size_t sz)
 {
-    return serial_allocate(sz);
+    block_manager* manager = (block_manager*) table_lookup(G_table, pthread_self());
+
+    if (manager == NULL)
+    {
+        manager = allocator_take_manager();
+        table_insert(G_table, pthread_self(), manager);
+    }
+    assert(manager);
+
+    return serial_allocate(manager, sz);
 }
 
 void mm_free(void *ptr)
 {
-    collection_free(ptr);
+    serial_free(ptr);
 }
 
 int mm_init(void)
@@ -656,6 +682,11 @@ int mm_init(void)
     req[1].M_blk_sz    = BLOCK_SZ[1];
     req[1].M_num       = 8;
     allocator_force_take_collection(&allocator, req, 0);
+
+    allocator_force_take_manager(16);
+
+    block_manager* manager = allocator_take_manager();
+    table_insert(G_table, pthread_self(), manager);
 
     //block_manager* manager = allocator_take_manager();
     //table_insert(G_table, 0, manager);
