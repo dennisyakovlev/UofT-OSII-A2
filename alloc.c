@@ -598,8 +598,7 @@ void* serial_allocate(block_manager* manager, size_t sz)
     manager_lock(manager);
 
     block_collection* collection = manager->M_heads[type];
-
-    assert(collection == NULL ^ manager->M_num[type] == 0);
+    assert((collection == NULL) == (manager->M_num[type] == 0));
 
     if (collection == NULL || collection->M_num_free == 0)
     {
