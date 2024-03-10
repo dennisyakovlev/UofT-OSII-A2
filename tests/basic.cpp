@@ -14,6 +14,8 @@ void basic_1()
 
 void basic_2()
 {
+    // allocate different size array, set their values, free them
+
     for (int i=1; i<1000000; i+=10000)
     {
         int* ptr = (int*)mm_malloc(sizeof(int) * i);
@@ -24,6 +26,8 @@ void basic_2()
 
 void basic_3()
 {
+    // allocate alloc ints at once, set values then free. do this 850 times
+
     const int alloc=1000;
     for (int i=0; i!=850; ++i)
     {
@@ -35,9 +39,9 @@ void basic_3()
 
 void run_basic()
 {
-    basic_1();
+    //basic_1();
     //basic_2();
-    //basic_3();
+    basic_3();
 
     printf("BASIC OKAY\n");
 }
