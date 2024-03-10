@@ -318,8 +318,9 @@ the thread which owns the manager has exclusive access to
 typedef struct memory_block_manager
 {
     block_collection*            M_heads[BLOCK_NUM_TYPES]; // heads of lists to held collection type
-    block_collection*            M_sep[BLOCK_NUM_TYPES];   // the last node in a list that still has space
+    block_collection*            M_mids[BLOCK_NUM_TYPES];  // the boundary between have room and not have room
     block_collection*            M_tails[BLOCK_NUM_TYPES]; // the last node of each list
+    block_collection*            M_sep[BLOCK_NUM_TYPES];   // the last node in a list that still has space
     uint32_t                     M_num[BLOCK_NUM_TYPES];   // currently held of each collection type
     struct memory_block_manager* M_next;
     pthread_mutex_t              M_lock;
@@ -345,7 +346,12 @@ void manager_insert(block_manager* manager, block_collection* after, uint32_t ty
     manager->M_num[type] += 1;
     insert->M_owner       = manager;
 
-    if (manager->M_tails[type] == after) // update tail
+    if (manager->M_mids[type] == after && after != manager->M_tails[type]) // insert new boundary, update marker
+    {
+        assert(insert->M_num_free!=0);
+        manager->M_mids[type] = insert;
+    }
+    if (manager->M_tails[type] == after) // insert new tail, update marker
         manager->M_tails[type] = insert;
 
     if (after==NULL) // insert to head
@@ -373,8 +379,10 @@ void manager_erase(block_manager* manager, uint32_t type, block_collection* node
 {
     manager->M_num[type] -= 1;
 
-    if (node == manager->M_tails[type]) // update the tail
+    if (node == manager->M_tails[type]) // erase tail, update the marker
         manager->M_tails[type] = node->M_prev;
+    if (node == manager->M_mids[type]) // erase boundary, update the marker
+        manager->M_mids[type] = node->M_prev;
 
     if (node == manager->M_heads[type]) // erase head
     {
@@ -548,12 +556,16 @@ int allocator_force_take_manager(uint32_t num)
  */
 block_manager* allocator_take_manager(void)
 {
+    manager_lock(&allocator);
+
     if (allocator.M_next==NULL && allocator_force_take_manager(4))
         return NULL;
 
     block_manager* manager = allocator.M_next;
     allocator.M_next       = manager->M_next;
     manager->M_next        = NULL;
+
+    manager_unlock(&allocator);
 
     return manager;
 }
@@ -563,11 +575,15 @@ block_manager* allocator_take_manager(void)
  */
 void allocator_give_manager(block_manager* manager)
 {
+    manager_lock(&allocator);
+
     assert(manager->M_next==NULL);
     assert(manager!=&allocator);
 
     manager->M_next  = allocator.M_next;
     allocator.M_next = manager;
+
+    manager_unlock(&allocator);
 }
 
 //endregion
@@ -628,7 +644,6 @@ void* serial_allocate(block_manager* manager, size_t sz)
         // move it to the end
         manager_erase(manager, type, collection);
         manager_insert(manager, manager->M_tails[type], type, collection);
-        manager->M_num[type] -= 1;
     }
 
     manager_unlock(manager);
@@ -645,7 +660,16 @@ void serial_free(void* ptr)
 
     collection_free(ptr);
 
-    // if collection is now not full, move to front of fulls
+    // if collection is now not full, move to end of not fulls
+    if (collection->M_num_free == 1)
+    {
+        const int32_t type = collection_find_type(collection->M_blk_sz);
+        if (manager->M_mids[type] != collection)
+        {
+            manager_erase(manager, type, collection);
+            manager_insert(manager, manager->M_mids[type], type, collection);
+        }
+    }
 
     manager_unlock(manager);
 }
