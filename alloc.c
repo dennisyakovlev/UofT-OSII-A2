@@ -91,8 +91,8 @@ static inline __attribute__((always_inline)) int vector_find_first_gte(const int
 typedef struct fast_hash_table
 {
     int32_t    M_sz;
-    int32_t**  M_keys;    // 1d array treated as 2d array of size n*8
-    void***    M_values;  // 1d array treated as 2d array of size n*8
+    int32_t*   M_keys;
+    char**     M_values;
 }
 hash_table;
 
@@ -110,7 +110,7 @@ int32_t table_hash(hash_table* table, int32_t x)
 
 int32_t table_need(int32_t sz)
 {
-    return sizeof(hash_table) + ((8 * sz) * sizeof(int32_t)) + ((8 * sz) + sizeof(void*));
+    return sizeof(hash_table) + ((8 * sz) * sizeof(int32_t)) + ((8 * sz) + sizeof(char*));
 }
 
 void table_init(hash_table* table, int32_t sz)
@@ -128,8 +128,8 @@ void table_init(hash_table* table, int32_t sz)
 
     const int32_t key_sz = sizeof(int32_t) * (8 * sz);
     table->M_sz          = sz;
-    table->M_keys        = (int32_t**)((char*)table + sizeof(hash_table));
-    table->M_values      = (void***)((char*)table + sizeof(hash_table) + key_sz);
+    table->M_keys        = (int32_t*)((char*)table + sizeof(hash_table));
+    table->M_values      = (char**)((char*)table + sizeof(hash_table) + key_sz);
 
     memset(table->M_keys, 0, key_sz);
 }
@@ -137,32 +137,32 @@ void table_init(hash_table* table, int32_t sz)
 void* table_lookup(hash_table* table, int32_t k)
 {
     int32_t hashed = table_hash(table, k);
-    int32_t found  = vector_find_int(k, table->M_keys[hashed]);
+    int32_t found  = vector_find_int(k, table->M_keys + (hashed*8));
 
-    return found >= 8 ? NULL : table->M_values[hashed][found];
+    return found >= 8 ? NULL : table->M_values + (hashed*8 + found);
 }
 
 void table_insert(hash_table* table, int32_t k, void* data)
 {
     int32_t hashed = table_hash(table, k);
-    int32_t found  = vector_find_int(k, table->M_keys[hashed]);
+    int32_t found  = vector_find_int(k, table->M_keys + (hashed*8));
 
     if (found >= 8) // inserting new key
-        found = vector_find_int(0, table->M_keys[hashed]);
+        found = vector_find_int(0, table->M_keys + (hashed*8));
     assert(0 <= found && found < 8);
 
-    table->M_keys[hashed][found] = k;
-    table->M_values[hashed][found] = data;
+    (table->M_keys + hashed*8)[found]   = k;
+    (table->M_values + hashed*8)[found] = (char*)data;
 }
 
 void table_remove(hash_table* table, int32_t k)
 {
     int32_t hashed = table_hash(table, k);
-    int32_t found  = vector_find_int(k, table->M_keys[hashed]);
+    int32_t found  = vector_find_int(k, table->M_keys + (hashed*8));
     assert(0 <= found && found < 8);
 
-    table->M_keys[hashed][found]   = 0;
-    table->M_values[hashed][found] = NULL;
+    (table->M_keys + hashed*8)[found]   = 0;
+    (table->M_values + hashed*8)[found] = NULL;
 }
 
 void table_free(void)
@@ -328,7 +328,7 @@ block_manager;
 
 void manager_init(block_manager* manager)
 {
-    pthread_mutex_init(&manager->M_lock, NULL);
+    assert(pthread_mutex_init(&manager->M_lock, NULL) == 0);
 }
 
 /**

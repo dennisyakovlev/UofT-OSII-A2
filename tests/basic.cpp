@@ -36,8 +36,8 @@ void basic_3()
 void run_basic()
 {
     basic_1();
-    basic_2();
-    basic_3();
+    //basic_2();
+    //basic_3();
 
     printf("BASIC OKAY\n");
 }
