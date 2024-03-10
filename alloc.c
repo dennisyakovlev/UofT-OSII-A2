@@ -139,7 +139,7 @@ void* table_lookup(hash_table* table, int32_t k)
     int32_t hashed = table_hash(table, k);
     int32_t found  = vector_find_int(k, table->M_keys + (hashed*8));
 
-    return found >= 8 ? NULL : table->M_values + (hashed*8 + found);
+    return found >= 8 ? NULL : (table->M_values + hashed*8)[found];
 }
 
 void table_insert(hash_table* table, int32_t k, void* data)
@@ -629,6 +629,7 @@ void* serial_allocate(block_manager* manager, size_t sz)
         // move it to the end
         manager_erase(manager, type, collection);
         manager_insert(manager, manager->M_tails[type], type, collection);
+        manager->M_num[type] -= 1;
     }
 
     manager_unlock(manager);
@@ -688,14 +689,6 @@ int mm_init(void)
 
     block_manager* manager = allocator_take_manager();
     table_insert(G_table, pthread_self(), manager);
-
-    //block_manager* manager = allocator_take_manager();
-    //table_insert(G_table, 0, manager);
-
-    //req[0].M_bitset_sz = BITSET_SZ[1];
-    //req[0].M_blk_sz    = BLOCK_SZ[1];
-    //req[0].M_num       = 1;
-    //allocator_take_collection(manager, req);
 
 	return 0;
 }
