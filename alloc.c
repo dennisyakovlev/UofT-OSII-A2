@@ -185,8 +185,7 @@ a block collection is a contiguous set of memory where
 typedef struct memory_block_collection
 {
     uint32_t  M_bitset[8];
-    uint32_t  M_bitset_sz; // range of [1,8], have 32*bitset_sz blocks
-    ptrdiff_t M_blk_sz;    // the block size
+    int32_t   M_blk_sz;    // the block size
     uint32_t  M_num_free;  // number of free blocks in this collection
     struct memory_block_collection
              *M_next,      // next collection in list, NULL is end
@@ -203,14 +202,13 @@ typedef struct memory_block
 }
 block;
 
-void collection_init(void* mem, uint32_t bitset_sz, ptrdiff_t block_sz)
+void collection_init(void* mem, int32_t bitset_sz, int32_t block_sz)
 {
     assert(1<=bitset_sz && bitset_sz<=8);
 
     block_collection* collection = (block_collection*)mem;
 
-    memset(collection->M_bitset, 0, sizeof(uint32_t) * 8);
-    collection->M_bitset_sz = bitset_sz;
+    memset(collection->M_bitset, 0, sizeof(int32_t) * 8);
     collection->M_blk_sz    = block_sz;
     collection->M_num_free  = 32 * bitset_sz;
     collection->M_next      = NULL;
@@ -218,7 +216,7 @@ void collection_init(void* mem, uint32_t bitset_sz, ptrdiff_t block_sz)
 }
 
 //inline __attribute__ ((always_inline))
-size_t collection_needed(uint32_t bitset_sz, ptrdiff_t blk_sz)
+int32_t collection_needed(int32_t bitset_sz, int32_t blk_sz)
 {
     if (bitset_sz==0 || blk_sz==0)
     {
@@ -410,9 +408,9 @@ structure to give to allocator on request
 */
 typedef struct memory_collection_info
 {
-    uint32_t  M_bitset_sz;
-    ptrdiff_t M_blk_sz;
-    uint32_t  M_num;       // number of this collection wanted
+    int32_t  M_bitset_sz;
+    int32_t  M_blk_sz;
+    int32_t  M_num;       // number of this collection wanted
 }
 collection_info;
 
@@ -437,13 +435,13 @@ int allocator_force_take_collection(block_manager* into, collection_info* req, s
     if (!ptr) return 1;
 
     // init the blocks, give to into
-    for (uint32_t type=0; type!=BLOCK_NUM_TYPES; ++type)
+    for (int32_t type = 0; type != BLOCK_NUM_TYPES; ++type)
     {
-        const ptrdiff_t collection_sz = collection_needed(req[type].M_bitset_sz, req[type].M_blk_sz);
-        for (uint32_t j=0; j!=req[type].M_num; ++j, ptr+=collection_sz)
+        const int32_t collection_sz = collection_needed(req[type].M_bitset_sz, req[type].M_blk_sz);
+        for (int32_t j = 0; j != req[type].M_num; ++j, ptr += collection_sz)
         {
             collection_init(ptr, req[type].M_bitset_sz, req[type].M_blk_sz);
-            manager_insert(into, NULL, type, (block_collection*)ptr);
+            manager_insert(into, NULL, type, (block_collection *) ptr);
         }
     }
 
@@ -451,22 +449,28 @@ int allocator_force_take_collection(block_manager* into, collection_info* req, s
 }
 
 /**
-request collections using the info struct from the global allocator. there are BLOCK_NUM_TYPES
-    info structs. the lists of collections corresponding to request will be set as the head of
-    the corresponding lists in the into, with any free collections being taken from from
-*/
-int allocator_take_collection(block_manager* into, collection_info* req)
+ * request collections using the info struct from the global allocator. there are BLOCK_NUM_TYPES
+ * info structs. the lists of collections corresponding to request will be set as the head of
+ * the corresponding lists in the into, with any free collections being taken from from
+ *
+ * Note: <into> should be already locked
+ *
+ * @param into
+ * @param req
+ * @return
+ */
+int allocator_take_collection(block_manager *into, collection_info *req)
 {
-    // TODO: maybe skipped list approximation optmization
-
-    size_t size=0;
-    for (uint32_t type=0; type!=BLOCK_NUM_TYPES; ++type)
+    // TODO: maybe skipped list approximation optimization
+    manager_lock(&allocator);
+    size_t size = 0;
+    for (uint32_t type = 0; type != BLOCK_NUM_TYPES; ++type)
     {
         // add any collections already have in from to into
-        for (; req[type].M_num!=0 && allocator.M_num[type]!=0;)
+        for (; req[type].M_num != 0 && allocator.M_num[type] != 0;)
         {
             //TODO: tail
-            block_collection* head = allocator.M_heads[type];
+            block_collection *head = allocator.M_heads[type];
             manager_erase(&allocator, type, head);
             manager_insert(into, NULL, type, head);
 
@@ -475,12 +479,12 @@ int allocator_take_collection(block_manager* into, collection_info* req)
 
         // any block collections that from doesn't already have should
         // be requested from the OS
-        size+=collection_needed(req[type].M_bitset_sz, req[type].M_blk_sz) * req[type].M_num;
+        size += collection_needed(req[type].M_bitset_sz, req[type].M_blk_sz) * req[type].M_num;
     }
 
-    if (size==0) return 0; // from had all requested blocks
-
-    return allocator_force_take_collection(into, req, size);
+    int ret = size == 0 ? 0 : allocator_force_take_collection(into, req, size);
+    manager_unlock(&allocator);
+    return ret;
 }
 
 /**
@@ -573,16 +577,16 @@ void allocator_give_manager(block_manager* manager)
  * @param sz size of memory to allocate
  * @return pointer to the allocated memory, NULL if OOM
  */
-void* serial_allocate(size_t sz)
+void* serial_allocate(block_manager *manager, size_t sz)
 {
     // find the block head with a good size
     const uint32_t type = collection_find_type(sz);
     // TODO type == -1 special case
 
-    manager_lock(&allocator);
+    manager_lock(manager);
 
-    block_collection* collection = allocator.M_heads[type];
-    if (allocator.M_num[type] == 0 || collection->M_num_free == 0)
+    block_collection* collection = manager->M_heads[type];
+    if (manager->M_num[type] == 0 || collection->M_num_free == 0)
     {
         assert(collection == NULL);
         // all nodes are full or the head is NULL
@@ -593,11 +597,11 @@ void* serial_allocate(size_t sz)
         req[type].M_num        = 8;
 
         // allocate a new node, it will be placed at the head
-        int result = allocator_force_take_collection(&allocator, req, 0);
+        int result = allocator_take_collection(manager, req);
         if (result != 0) {
             return NULL;
         }
-        collection = allocator.M_heads[type];
+        collection = manager->M_heads[type];
     }
 
     assert(collection != NULL);
@@ -607,20 +611,21 @@ void* serial_allocate(size_t sz)
     assert(ptr != NULL);
 
     // check if it is full
-    if (collection->M_num_free == 0 && collection != allocator.M_tails[type])
+    if (collection->M_num_free == 0 && collection != manager->M_tails[type])
     {
         // move it to the end
-        manager_erase(&allocator, type, collection);
-        manager_insert(&allocator, allocator.M_tails[type], type, collection);
+        manager_erase(manager, type, collection);
+        manager_insert(manager, manager->M_tails[type], type, collection);
     }
 
-    manager_unlock(&allocator);
+    manager_unlock(manager);
 
     return ptr;
 }
 
 void serial_free(void* ptr)
 {
+    // TODO get manager
     manager_lock(&allocator);
 
     collection_free(ptr);
@@ -632,7 +637,7 @@ hash_table* G_table;
 
 void *mm_malloc(size_t sz)
 {
-    block_manager* manager = table_lookup(G_table, pthread_self());
+    block_manager* manager = (block_manager*) table_lookup(G_table, pthread_self());
 
     if (manager == NULL)
     {
