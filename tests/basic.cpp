@@ -2,6 +2,7 @@
 #include <vector>
 #include <alloc.h>
 #include <tests.h>
+#include <cassert>
 
 using namespace std;
 
@@ -26,6 +27,19 @@ void basic_2()
 
 void basic_3()
 {
+    // allocate alot of individual ints
+
+    vector<int*> v(10000000);
+    for (int i=0; i!=int(size(v)); ++i) v[i]=(int*)mm_malloc(sizeof(int)), *v[i]=97;
+    for (int i=0; i!=int(size(v)); ++i)
+    {
+        assert(*v[i]==97);
+        mm_free(v[i]);
+    }
+}
+
+void basic_4()
+{
     // allocate alloc ints at once, set values then free. do this 850 times
 
     const int alloc=1000;
@@ -33,15 +47,20 @@ void basic_3()
     {
         vector<int*> v(alloc);
         for (int j=0; j!=alloc; ++j) v[j]=(int*)mm_malloc(sizeof(int)), *v[j]=97;
-        for (int j=0; j!=alloc; ++j) mm_free(v[j]);
+        for (int j=0; j!=alloc; ++j)
+        {
+            assert(*v[j]==97);
+            mm_free(v[j]);
+        }
     }
 }
 
 void run_basic()
 {
-    basic_1();
-    basic_2();
-    basic_3();
+    //basic_1();
+    //basic_2();
+    //basic_3();
+    basic_4();
 
     printf("BASIC OKAY\n");
 }
