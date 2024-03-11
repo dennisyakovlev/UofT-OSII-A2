@@ -61,13 +61,15 @@ int32_t vector_find_int(int32_t toFind, int32_t * from)
 
 int find_first_0_bit(const uint32_t num)
 {
-    for (int j=0;j<32;j++)
+    for (int j = 0; j < 32; j++)
     {
-        if ((num & ( 1 << j )) >> j == 0)
+        if ((num & (1 << j)) >> j == 0)
         {
             return j;
         }
     }
+
+    return 32;
 }
 
 int vector_find_first_0_bit(const uint32_t *m256)
