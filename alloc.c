@@ -210,6 +210,8 @@ void table_free(void)
 #define BLOCK_NUM_TYPES 8
 const int32_t BLOCK_SZ[8]  = {8,32,128,512,2048,16384,131072,1048576};
 //const int32_t BITSET_SZ[8] = {8,8, 8,  8,   4,    1,     1,      1};
+pthread_mutex_t sbrk_mutex;
+
 
 // -------------------------------  Block Collection Begin  -------------------------------
 //region Block Collection
@@ -474,8 +476,9 @@ int allocator_force_take_collection(block_manager* into, collection_info req)
 {
     size_t size = collection_needed(BLOCK_SZ[req.type]) * req.M_num;
 
-
-    char* ptr = (char*)mem_sbrk(size); //TODO: use sbrk
+    pthread_mutex_lock(&sbrk_mutex);
+    char* ptr = (char*)mem_sbrk(size);
+    pthread_mutex_unlock(&sbrk_mutex);
     if (ptr == NULL) return 1;
 
     // init the blocks, give to into
@@ -490,9 +493,9 @@ int allocator_force_take_collection(block_manager* into, collection_info req)
 }
 
 /**
- * request collections using the info struct from the global allocator. there are BLOCK_NUM_TYPES
- * info structs. the lists of collections corresponding to request will be set as the head of
- * the corresponding lists in the into, with any free collections being taken from from
+ * request collections using the info struct from the global allocator.
+ * the collection requested will be set as the head of
+ * the list in the into, with any free collections being taken from global
  *
  * Note: <into> should be already locked
  *
@@ -503,10 +506,10 @@ int allocator_force_take_collection(block_manager* into, collection_info req)
 int allocator_take_collection(block_manager *into, collection_info req)
 {
     // TODO: maybe skipped list approximation optimization
-    manager_lock(&allocator);
 
     uint32_t type = req.type;
 
+    manager_lock(&allocator);
     // take any available collections from global
     for (; req.M_num != 0 && allocator.M_num[type] != 0;)
     {
@@ -516,6 +519,7 @@ int allocator_take_collection(block_manager *into, collection_info req)
 
         req.M_num -= 1;
     }
+    manager_unlock(&allocator);
 
     if (req.M_num == 0)
     {
@@ -526,7 +530,6 @@ int allocator_take_collection(block_manager *into, collection_info req)
     // any block collections that from doesn't already have should
     // be requested from the OS
     int ret = allocator_force_take_collection(into, req);
-    manager_unlock(&allocator);
     return ret;
 }
 
@@ -551,7 +554,9 @@ void allocator_return_collection_to_global(block_collection* collection, uint32_
 int allocator_force_take_manager(uint32_t num)
 {
     const size_t wanted     = sizeof(block_manager) * num;
+    pthread_mutex_lock(&sbrk_mutex);
     block_manager* managers = (block_manager*)mem_sbrk(wanted);
+    pthread_mutex_unlock(&sbrk_mutex);
     if (managers == NULL)
     {
         return -1;
@@ -750,6 +755,8 @@ int mm_init(void)
     if (init_res != 0) {
         return init_res;
     }
+
+    pthread_mutex_init(&sbrk_mutex, NULL);
 
     G_table = (hash_table*)mem_sbrk(table_need(32));
     table_init(G_table, 32);
