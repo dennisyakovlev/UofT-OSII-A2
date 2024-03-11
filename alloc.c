@@ -208,7 +208,7 @@ void table_free(void)
 // -------------------------------  Hash Table End          -------------------------------
 
 #define BLOCK_NUM_TYPES 8
-const int32_t BLOCK_SZ[8]  = {8,32,128,512,2048,16384,131072,1048576};
+const int32_t BLOCK_SZ[BLOCK_NUM_TYPES] = {8,64,256,512,1024,4096,65535,1048576};
 //const int32_t BITSET_SZ[8] = {8,8, 8,  8,   4,    1,     1,      1};
 pthread_mutex_t sbrk_mutex;
 
