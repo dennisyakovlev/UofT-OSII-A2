@@ -336,40 +336,40 @@ void manager_init(block_manager* manager)
  * insert a new block collection into the corresponding list of type after
  * the after collection. if after is NULL, insert new as head
  */
-void manager_insert(block_manager* manager, block_collection* after, uint32_t type, block_collection* insert)
+void manager_insert(block_manager* manager, block_collection* after, uint32_t type, block_collection* node)
 {
-    assert(after != insert);
-    assert(insert->M_owner == manager || insert->M_owner == NULL);
-    assert(insert->M_prev == NULL);
-    assert(insert->M_next == NULL);
+    assert(after != node);
+    assert(node->M_prev == NULL);
+    assert(node->M_next == NULL);
 
     manager->M_num[type] += 1;
-    insert->M_owner       = manager;
+    node->M_owner = manager;
 
-    if (manager->M_mids[type] == after && after != manager->M_tails[type]) // insert new boundary, update marker
+    if (after != NULL)
     {
-        assert(insert->M_num_free!=0);
-        manager->M_mids[type] = insert;
+        node->M_next = after->M_next;
+        if (after->M_next != NULL) // after.next = null => after is tail
+            after->M_next->M_prev = node;
+        else
+            manager->M_tails[type] = node;
+        after->M_next = node;
     }
-    if (manager->M_tails[type] == after) // insert new tail, update marker
-        manager->M_tails[type] = insert;
-
-    if (after==NULL) // insert to head
+    else // insert new head
     {
-        block_collection* next = manager->M_heads[type];
-        manager->M_heads[type] = insert;
-        insert->M_next         = next;
-        if (next) next->M_prev = insert; // size > 1
-        return;
+        if (manager->M_tails[type] == NULL) // first node in list
+        {
+            manager->M_tails[type] = node;
+            manager->M_mids[type] = node;
+        }
+        else
+            manager->M_heads[type]->M_prev = node;
+        node->M_next = manager->M_heads[type];
+        manager->M_heads[type] = node;
     }
+    node->M_prev = after;
 
-    block_collection* next = after->M_next;
-    block_collection* prev = after->M_prev;
-
-    insert->M_next            = next;
-    insert->M_prev            = prev;
-    if (next) next->M_prev    = insert; // tail
-    prev->M_next              = insert;
+    if (after == manager->M_mids[type] && node->M_num_free != 0)
+        manager->M_mids[type] = node;
 }
 
 /**
@@ -377,31 +377,28 @@ void manager_insert(block_manager* manager, block_collection* after, uint32_t ty
  */
 void manager_erase(block_manager* manager, uint32_t type, block_collection* node)
 {
+    assert(node->M_owner == manager);
+
     manager->M_num[type] -= 1;
-
-    if (node == manager->M_tails[type]) // erase tail, update the marker
-        manager->M_tails[type] = node->M_prev;
-    if (node == manager->M_mids[type]) // erase boundary, update the marker
-        manager->M_mids[type] = node->M_prev;
-
-    if (node == manager->M_heads[type]) // erase head
-    {
-        manager->M_heads[type] = node->M_next;
-
-        node->M_prev  = NULL;
-        node->M_next  = NULL;
-        node->M_owner = NULL;
-        return;
-    }
 
     block_collection* prev = node->M_prev;
     block_collection* next = node->M_next;
 
-    prev->M_next           = next;
-    if (next) next->M_prev = prev;
+    if (prev != NULL) // not head
+        prev->M_next = next;
+    else              // head
+        manager->M_heads[type] = next;
 
-    node->M_next  = NULL;
+    if (next != NULL) // not tail
+        next->M_prev = prev;
+    else              // tail
+        manager->M_tails[type] = prev;
+
+    if (manager->M_mids[type] == node)
+        manager->M_mids[type] = prev;
+
     node->M_prev  = NULL;
+    node->M_next  = NULL;
     node->M_owner = NULL;
 }
 
@@ -616,7 +613,10 @@ void* serial_allocate(block_manager* manager, size_t sz)
     block_collection* collection = manager->M_heads[type];
     assert((collection == NULL) == (manager->M_num[type] == 0));
 
-    if (collection == NULL || collection->M_num_free == 0)
+    // no collection available or
+    // last available collection is about to be full
+    //      collection = mid => mid is head => last not full block left
+    if (collection == NULL || (collection->M_num_free == 1 && collection == manager->M_mids[type]))
     {
         // all nodes are full or the head is NULL
         collection_info req[8] = {0};
@@ -629,7 +629,9 @@ void* serial_allocate(block_manager* manager, size_t sz)
         if (result != 0) {
             return NULL;
         }
-        collection = manager->M_heads[type];
+
+        if (collection == NULL)
+            collection = manager->M_heads[type];
     }
 
     assert(collection != NULL);
@@ -664,8 +666,11 @@ void serial_free(void* ptr)
     if (collection->M_num_free == 1)
     {
         const int32_t type = collection_find_type(collection->M_blk_sz);
-        manager_erase(manager, type, collection);
-        manager_insert(manager, manager->M_mids[type], type, collection);
+        if (manager->M_mids[type] != collection)
+        {
+            manager_erase(manager, type, collection);
+            manager_insert(manager, manager->M_mids[type], type, collection);
+        }
     }
 
     manager_unlock(manager);
