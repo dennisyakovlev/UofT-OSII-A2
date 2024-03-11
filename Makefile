@@ -4,23 +4,30 @@ OBJ_DEPS = alloc.o
 
 TEST_FLAGS = -std=gnu99 -Wall -fmessage-length=0 -pipe -O3 -finline-limit=65000 -fkeep-inline-functions -finline-functions -ffast-math -fomit-frame-pointer -D_REENTRANT=1 -march=native
 
+TEST_DEPS = memlib.c mm_thread.c timer.c alloc.c
 TEST_FLAGS_DBG = -std=gnu99 -Wall -g -D_REENTRANT=1 -march=native
 
 
 .PHONY: tests clean
 
-all: main main2 linux-scalability linux-scalability-dbg
+all: main main2 linux-scalability linux-scalability-dbg larson larson-dbg
 
-main: $(OBJ_DEPS) main.c
+main:  main.c
 	$(CC) $(CC_FLAGS) $^ -o $@
 
-main2: $(OBJ_DEPS) main2.c
+main2: main2.c
 	$(CC) $(CC_FLAGS) $^ -o $@
 
-linux-scalability: memlib.c mm_thread.c timer.c alloc.c linux-scalability.c
-	gcc $(TEST_FLAGS) $^  -lm -o $@
+linux-scalability: $(TEST_DEPS) linux-scalability.c
+	gcc $(TEST_FLAGS) $^ -lm -o $@
 
-linux-scalability-dbg: memlib.c mm_thread.c timer.c alloc.c linux-scalability.c
+linux-scalability-dbg: $(TEST_DEPS) linux-scalability.c
+	gcc $(TEST_FLAGS_DBG) $^ -lm -o $@
+
+larson: $(TEST_DEPS) larson.c
+	gcc $(TEST_FLAGS) $^ -lm -o $@
+
+larson-dbg: $(TEST_DEPS) larson.c
 	gcc $(TEST_FLAGS_DBG) $^ -lm -o $@
 
 tests: 
