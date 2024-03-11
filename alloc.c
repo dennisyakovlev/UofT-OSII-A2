@@ -2,13 +2,13 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <stddef.h>
-#include <alloc.h>
 #include <string.h>
-
+#include <immintrin.h>
+#include <stdio.h>
 #include <assert.h>
 
-#include "hashtable.h"
-#include "intrinsics.h"
+#include "memlib.h"
+#include "alloc.h"
 
 struct memory_block_collection;
 struct memory_block_manager;
@@ -16,11 +16,186 @@ struct memory_block_manager;
 typedef struct memory_block_manager block_manager;
 
 
+// -------------------------------  Vector Begin            -------------------------------
+
+inline int32_t vector_find_int(int32_t toFind, int32_t * from)
+{
+//__m256i arr8 = _mm256_lddqu_si256((__m256i *)from);
+//__m256i num8 = _mm256_set1_epi32(toFind);
+//
+//__m256i cmp = _mm256_cmpeq_epi32(arr8, num8);
+//__m256 cmp_ps = _mm256_castsi256_ps(cmp);
+//int mask = _mm256_movemask_ps(cmp_ps);
+//return _tzcnt_u32(mask);
+
+    for (int i=0;i<8;i++)
+    {
+        if (toFind == from[i]) {
+            return i;
+        }
+    }
+    return 8;
+}
+
+///**
+// * Find the first 1 bit in a 256 bit bitset
+// * @param m256i the bitset to search
+// * @return index of the first 1 bit, or 256 if no 1 bit is found
+// */
+//inline int vector_find_first_1_bit(const __m256i* m256i)
+//{
+//    __m256i cmp = _mm256_cmpeq_epi32(*m256i, _mm256_setzero_si256()); // compare with zero to find the first non-zero 32bit group
+//    uint8_t zero_mask = _mm256_movemask_ps(_mm256_castsi256_ps(cmp)); // mask of zero 32bit groups
+//    uint8_t nonzero_mask = ~ zero_mask; // bitwise not the mask, 1 means non-zero 32bit group in the bitset
+//
+//    if (nonzero_mask == 0)
+//    {
+//        return 256;  // none of the groups have 1, so all bits are zero in the bitset
+//    }
+//
+//    uint32_t idx_first_1_group = _tzcnt_u32(nonzero_mask);  // first non-zero 32bit group
+//    uint32_t first_1_group = ((uint32_t*)m256i)[idx_first_1_group];  // get the first non-zero 32bit group
+//    uint32_t idx_first_1 = _tzcnt_u32(first_1_group);  // find the first 1 in the first non-zero 32bit group
+//    return 32 * idx_first_1_group + idx_first_1;  // combine the index
+//}
+
+inline int vector_find_first_0_bit(const uint32_t *m256)
+{
+//    __m256i inverted_bitset = ~ _mm256_lddqu_si256((const __m256i*)m256); // invert the bitset to find the first 1
+//    int result = vector_find_first_1_bit(&inverted_bitset);
+//    return result;
+    for (int i=0;i<8;i++)
+    {
+        for (int j=0;j<32;j++)
+        {
+            if ((m256[i] & ( 1 << j )) >> j == 0)
+            {
+                return i * 32 + j;
+            }
+        }
+    }
+
+    return 256;
+}
+
+/**
+ * Find the first element in the array that is greater than or equal to the number
+ * @param array Array of 8 32 bit integers
+ * @param num The number to compare with
+ * @return The index of the first element in the array which is >= num, or >=8 if no such element exists
+ */
+inline int vector_find_first_gte(const int32_t* array, int32_t num)
+{
+//    __m256i sizes = _mm256_lddqu_si256((__m256i *)array);
+//    __m256i num8 = _mm256_set1_epi32(num - 1);  // minus one to deal with gte
+//
+//    __m256i result = _mm256_cmpgt_epi32(sizes, num8);
+//    __m256 cmp_ps = _mm256_castsi256_ps(result);
+//    int mask = _mm256_movemask_ps(cmp_ps);
+//    uint32_t trail = _tzcnt_u32(mask);
+//    return trail;
+    for (int i=0;i<8;i++)
+    {
+        if (array[i] >= num) {
+            return i;
+        }
+    }
+    return 8;
+}
+
+// -------------------------------  Vector End              -------------------------------
+
+// -------------------------------  Hash Table Begin        -------------------------------
+
+/**
+ * a probabilistic hash table that uses fixed seperate chaining
+ */
+typedef struct fast_hash_table
+{
+    int32_t    M_sz;
+    int32_t*   M_keys;
+    char**     M_values;
+} hash_table;
+
+/**
+ * hash function taken from internet
+ * https://stackoverflow.com/questions/664014/what-integer-hash-function-are-good-that-accepts-an-integer-hash-key
+ */
+int32_t table_hash(hash_table* table, int32_t x)
+{
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = (x >> 16) ^ x;
+    return 1 + (x % table->M_sz);
+}
+
+int32_t table_need(int32_t sz)
+{
+    return sizeof(hash_table) + ((8 * sz) * sizeof(int32_t)) + ((8 * sz) + sizeof(char*));
+}
+
+void table_init(hash_table* table, int32_t sz)
+{
+    /*
+        layout of table in memory is
+        M_sz         number of keys
+        M_keys       (point to p1)
+        M_values     (p2)
+        keys start   (p1)
+        ...
+        values start (p2)
+        ...
+    */
+
+    const int32_t key_sz = sizeof(int32_t) * (8 * sz);
+    table->M_sz          = sz;
+    table->M_keys        = (int32_t*)((char*)table + sizeof(hash_table));
+    table->M_values      = (char**)((char*)table + sizeof(hash_table) + key_sz);
+
+    memset(table->M_keys, 0, key_sz);
+}
+
+void* table_lookup(hash_table* table, int32_t k)
+{
+    int32_t hashed = table_hash(table, k);
+    int32_t found  = vector_find_int(k, table->M_keys + (hashed*8));
+
+    return found >= 8 ? NULL : (table->M_values + hashed*8)[found];
+}
+
+void table_insert(hash_table* table, int32_t k, void* data)
+{
+    int32_t hashed = table_hash(table, k);
+    int32_t found  = vector_find_int(k, table->M_keys + (hashed*8));
+
+    if (found >= 8) // inserting new key
+        found = vector_find_int(0, table->M_keys + (hashed*8));
+    assert(0 <= found && found < 8);
+
+    (table->M_keys + hashed*8)[found]   = k;
+    (table->M_values + hashed*8)[found] = (char*)data;
+}
+
+void table_remove(hash_table* table, int32_t k)
+{
+    int32_t hashed = table_hash(table, k);
+    int32_t found  = vector_find_int(k, table->M_keys + (hashed*8));
+    assert(0 <= found && found < 8);
+
+    (table->M_keys + hashed*8)[found]   = 0;
+    (table->M_values + hashed*8)[found] = NULL;
+}
+
+void table_free(void)
+{
+    assert(1);
+}
+
+// -------------------------------  Hash Table End          -------------------------------
+
 #define BLOCK_NUM_TYPES 8
-const int32_t BLOCK_SZ[8]  = {8,64,256,1024,16384,262144,4194304,67108864};
+const int32_t BLOCK_SZ[8]  = {8,32,128,512,2048,16384,131072,1048576};
 const int32_t BITSET_SZ[8] = {8,8, 8,  8,   4,    1,     1,      1};
-
-
 
 // -------------------------------  Block Collection Begin  -------------------------------
 //region Block Collection
@@ -36,12 +211,12 @@ typedef struct memory_block_collection
     int32_t   M_blk_sz;    // the block size
     uint32_t  M_num_free;  // number of free blocks in this collection
     struct memory_block_collection
-             *M_next,      // next collection in list, NULL is end
-             *M_prev;      // previous collection in list
+            *M_next,      // next collection in list, NULL is end
+    *M_prev;      // previous collection in list
     struct memory_block_manager
-             *M_owner;
+            *M_owner;
 }
-block_collection;
+        block_collection;
 
 /**
  * The metadata we store right before each memory block
@@ -49,8 +224,7 @@ block_collection;
 typedef struct memory_block
 {
     block_collection* M_start; // start of block collection
-}
-block;
+} block;
 
 void collection_init(block_collection* collection, block_manager* owner, int32_t bitset_sz, int32_t block_sz)
 {
@@ -86,6 +260,7 @@ int32_t collection_find_type(int32_t sz)
     if (sz > BLOCK_SZ[BLOCK_NUM_TYPES - 1]) {
         // To large
         // TODO large blocks special case
+        fprintf(stderr, "SIZE TOO LARGE!!! %d REQUESTED\n", sz);
         return -1;
     }
 
@@ -166,7 +341,7 @@ typedef struct memory_block_manager
     struct memory_block_manager* M_next;
     pthread_mutex_t              M_lock;
 }
-block_manager;
+        block_manager;
 
 void manager_init(block_manager* manager)
 {
@@ -270,7 +445,7 @@ typedef struct memory_collection_info
     int32_t  M_blk_sz;
     int32_t  M_num;       // number of this collection wanted
 }
-collection_info;
+        collection_info;
 
 /**
  * forcefully allocate memory from OS and put it into given manager
@@ -289,7 +464,7 @@ int allocator_force_take_collection(block_manager* into, collection_info* req, s
         }
     }
 
-    char* ptr = (char*)malloc(size); //TODO: use sbrk
+    char* ptr = (char*)mem_sbrk(size); //TODO: use sbrk
     if (!ptr) return 1;
 
     // init the blocks, give to into
@@ -375,7 +550,12 @@ int allocator_give_collection(block_manager* manager, block_collection* collecti
 int allocator_force_take_manager(uint32_t num)
 {
     const size_t wanted     = sizeof(block_manager) * num;
-    block_manager* managers = (block_manager*)malloc(wanted);
+    block_manager* managers = (block_manager*)mem_sbrk(wanted);
+    if (managers == NULL)
+    {
+        return -1;
+    }
+
     memset(managers, 0, wanted);
 
     for (uint32_t i=0; i!=num; ++i, ++managers)
@@ -396,7 +576,7 @@ block_manager* allocator_take_manager(void)
 {
     manager_lock(&allocator);
 
-    if (allocator.M_next==NULL && allocator_force_take_manager(4))
+    if (allocator.M_next==NULL && allocator_force_take_manager(4) != 0)
         return NULL;
 
     block_manager* manager = allocator.M_next;
@@ -446,7 +626,8 @@ void allocator_give_manager(block_manager* manager)
 void* serial_allocate(block_manager* manager, size_t sz)
 {
     // find the block head with a good size
-    const uint32_t type = collection_find_type(sz);
+    const int32_t type = collection_find_type(sz);
+    if (type < 0) return NULL;
     // TODO type == -1 special case
 
     manager_lock(manager);
@@ -541,7 +722,12 @@ void mm_free(void *ptr)
 
 int mm_init(void)
 {
-    G_table = (hash_table*)malloc(table_need(32));
+    int init_res = mem_init();
+    if (init_res != 0) {
+        return init_res;
+    }
+
+    G_table = (hash_table*)mem_sbrk(table_need(32));
     table_init(G_table, 32);
 
     manager_init(&allocator);
@@ -557,6 +743,6 @@ int mm_init(void)
     block_manager* manager = allocator_take_manager();
     table_insert(G_table, pthread_self(), manager);
 
-	return 0;
+    return 0;
 }
 
