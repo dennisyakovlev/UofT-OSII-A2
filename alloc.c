@@ -351,7 +351,6 @@ typedef struct memory_block_manager
     block_collection*            M_heads[BLOCK_NUM_TYPES]; // heads of lists to held collection type
     block_collection*            M_mids[BLOCK_NUM_TYPES];  // the boundary between have room and not have room
     block_collection*            M_tails[BLOCK_NUM_TYPES]; // the last node of each list
-    block_collection*            M_sep[BLOCK_NUM_TYPES];   // the last node in a list that still has space
     uint32_t                     M_num[BLOCK_NUM_TYPES];   // currently held of each collection type
     struct memory_block_manager* M_next;
     pthread_mutex_t              M_lock;
@@ -379,9 +378,9 @@ void manager_insert(block_manager* manager, block_collection* after, uint32_t ty
     if (after != NULL)
     {
         node->M_next = after->M_next;
-        if (after->M_next != NULL) // after.next = null => after is tail
+        if (after->M_next != NULL) // after is not tail
             after->M_next->M_prev = node;
-        else
+        else // after is tail
             manager->M_tails[type] = node;
         after->M_next = node;
     }
@@ -390,6 +389,9 @@ void manager_insert(block_manager* manager, block_collection* after, uint32_t ty
         if (manager->M_tails[type] == NULL) // first node in list
         {
             manager->M_tails[type] = node;
+
+            assert(node->M_num_free != 0); //should never insert a free collection as the head
+
             manager->M_mids[type] = node;
         }
         else
@@ -504,7 +506,7 @@ int allocator_take_collection(block_manager *into, collection_info req)
 
     uint32_t type = req.type;
 
-    // add any collections already have in from to into
+    // take any available collections from global
     for (; req.M_num != 0 && allocator.M_num[type] != 0;)
     {
         block_collection *head = allocator.M_heads[type];
@@ -670,11 +672,19 @@ void* serial_allocate(block_manager* manager, size_t sz)
     assert(ptr != NULL);
 
     // check if it is full
-    if (collection->M_num_free == 0 && collection != manager->M_tails[type])
+    if (collection->M_num_free == 0)
     {
-        // move it to the end
-        manager_erase(manager, type, collection);
-        manager_insert(manager, manager->M_tails[type], type, collection);
+        if (collection == manager->M_mids[type])
+        {
+            manager->M_mids[type] = collection->M_prev;
+        }
+
+        if (collection != manager->M_tails[type])
+        {
+            // move it to the end
+            manager_erase(manager, type, collection);
+            manager_insert(manager, manager->M_tails[type], type, collection);
+        }
     }
 
     manager_unlock(manager);
@@ -692,7 +702,7 @@ void serial_free(void* ptr)
     collection_free(ptr);
 
     // if collection is now not full, move to end of not fulls
-    if (collection->M_num_free == 1)
+    if (collection->M_num_free == 1)  //TODO check empty and return to global
     {
         const int32_t type = collection_find_type(collection->M_blk_sz);
         if (manager->M_mids[type] != collection)
