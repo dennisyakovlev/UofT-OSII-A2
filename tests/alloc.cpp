@@ -4,86 +4,53 @@
 #include <stddef.h>
 #include <alloc.h>
 #include <string.h>
-
 #include <immintrin.h>
-
 #include <assert.h>
 
-struct fast_hash_table;
 struct memory_block_collection;
 struct memory_block_manager;
 
 typedef struct memory_block_manager block_manager;
 
-// -------------------------------  Vector Instructions Begin  ----------------------------
-//region Vector Instructions
 
-static inline __attribute__((always_inline)) int32_t vector_find_int(int32_t toFind, int32_t * from)
+// -------------------------------  Vector Begin            -------------------------------
+
+int vector_dennis_first_ge(const int* arr, int num)
 {
-    __m256i arr8 = _mm256_lddqu_si256((__m256i *)from);
-    __m256i num8 = _mm256_set1_epi32(toFind);
-
-    __m256i cmp = _mm256_cmpeq_epi32(arr8, num8);
-    __m256 cmp_ps = _mm256_castsi256_ps(cmp);
-    int mask = _mm256_movemask_ps(cmp_ps);
-    return _tzcnt_u32(mask);
+    __m256i haystack = _mm256_lddqu_si256((const __m256i*)arr);
+    __m256i needle   = _mm256_set_epi32(num, num, num, num, num, num, num, num);
+    __m256i comp     = _mm256_cmpgt_epi32(haystack, needle);
+    int mask         = _mm256_movemask_ps(_mm256_castsi256_ps(comp));
+    return __builtin_ctz(mask);
 }
 
-/**
- * Find the first 1 bit in a 256 bit bitset
- * @param m256i the bitset to search
- * @return index of the first 1 bit, or 256 if no 1 bit is found
- */
-static inline __attribute__((always_inline)) int vector_find_first_1_bit(const __m256i* m256i)
+int vector_dennis_0_bit(const int* arr)
 {
-    __m256i cmp = _mm256_cmpeq_epi32(*m256i, _mm256_setzero_si256()); // compare with zero to find the first non-zero 32bit group
-    uint8_t zero_mask = _mm256_movemask_ps(_mm256_castsi256_ps(cmp)); // mask of zero 32bit groups
-    uint8_t nonzero_mask = ~ zero_mask; // bitwise not the mask, 1 means non-zero 32bit group in the bitset
+    __m256i haystack = _mm256_lddqu_si256((const __m256i*)arr);
+    __m256i needle   = _mm256_set_epi32(0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF);
+    __m256i comp     = _mm256_cmpeq_epi32(haystack, needle);
+    int mask         = _mm256_movemask_ps(_mm256_castsi256_ps(comp));
+    int ind          = __builtin_ctz(~mask);
 
-    if (nonzero_mask == 0)
-    {
-        return 256;  // none of the groups have 1, so all bits are zero in the bitset
-    }
-
-    uint32_t idx_first_1_group = _tzcnt_u32(nonzero_mask);  // first non-zero 32bit group
-    uint32_t first_1_group = ((uint32_t*)m256i)[idx_first_1_group];  // get the first non-zero 32bit group
-    uint32_t idx_first_1 = _tzcnt_u32(first_1_group);  // find the first 1 in the first non-zero 32bit group
-    return 32 * idx_first_1_group + idx_first_1;  // combine the index
+    if (ind == 8)
+        return 256;
+    int check   = ~arr[ind];
+    int bit_ind = __builtin_clz(check);
+    return 32*ind + (31-bit_ind);
 }
 
-static inline __attribute__((always_inline)) int vector_find_first_0_bit(const uint32_t *m256)
+int vector_dennis_find_int(const int* arr, int num)
 {
-    __m256i inverted_bitset = ~ _mm256_lddqu_si256((const __m256i*)m256); // invert the bitset to find the first 1
-    int result = vector_find_first_1_bit(&inverted_bitset);
-    return result;
+    __m256i haystack = _mm256_lddqu_si256((const __m256i*)arr);
+    __m256i needle   = _mm256_set_epi32(num, num, num, num, num, num, num, num);
+    __m256i comp     = _mm256_cmpeq_epi32(haystack, needle);
+    int mask         = _mm256_movemask_ps(_mm256_castsi256_ps(comp));
+    return __builtin_ctz(mask);
 }
 
-/**
- * Find the first element in the array that is greater than or equal to the number
- * @param array Array of 8 32 bit integers
- * @param num The number to compare with
- * @return The index of the first element in the array which is >= num, or >=8 if no such element exists
- */
-static inline __attribute__((always_inline)) int vector_find_first_gte(const int32_t* array, int32_t num)
-{
-    __m256i sizes = _mm256_lddqu_si256((__m256i *)array);
-    __m256i num8 = _mm256_set1_epi32(num - 1);  // minus one to deal with gte
-
-    __m256i result = _mm256_cmpgt_epi32(sizes, num8);
-    __m256 cmp_ps = _mm256_castsi256_ps(result);
-    int mask = _mm256_movemask_ps(cmp_ps);
-    uint32_t trail = _tzcnt_u32(mask);
-    return trail;
-}
-
-//endregion
-// -------------------------------  Vector Instructions End   -----------------------------
+// -------------------------------  Vector End              -------------------------------
 
 // -------------------------------  Hash Table Begin        -------------------------------
-//region Hash Table
-
-#define HASH_TABLE_INUSE 8
-#define HASH_TABLE_FREE  9
 
 /**
  * a probabilistic hash table that uses fixed seperate chaining
@@ -137,7 +104,8 @@ void table_init(hash_table* table, int32_t sz)
 void* table_lookup(hash_table* table, int32_t k)
 {
     int32_t hashed = table_hash(table, k);
-    int32_t found  = vector_find_int(k, table->M_keys + (hashed*8));
+    //int32_t found  = vector_find_int(k, table->M_keys + (hashed*8));
+    int32_t found  = vector_dennis_find_int(table->M_keys + (hashed*8), k);
 
     return found >= 8 ? NULL : (table->M_values + hashed*8)[found];
 }
@@ -145,10 +113,12 @@ void* table_lookup(hash_table* table, int32_t k)
 void table_insert(hash_table* table, int32_t k, void* data)
 {
     int32_t hashed = table_hash(table, k);
-    int32_t found  = vector_find_int(k, table->M_keys + (hashed*8));
+    //int32_t found  = vector_find_int(k, table->M_keys + (hashed*8));
+    int32_t found  = vector_dennis_find_int(table->M_keys + (hashed*8), k);
 
     if (found >= 8) // inserting new key
-        found = vector_find_int(0, table->M_keys + (hashed*8));
+        found = vector_dennis_find_int(table->M_keys + (hashed*8), 0);
+        //found = vector_find_int(0, table->M_keys + (hashed*8));
     assert(0 <= found && found < 8);
 
     (table->M_keys + hashed*8)[found]   = k;
@@ -158,7 +128,8 @@ void table_insert(hash_table* table, int32_t k, void* data)
 void table_remove(hash_table* table, int32_t k)
 {
     int32_t hashed = table_hash(table, k);
-    int32_t found  = vector_find_int(k, table->M_keys + (hashed*8));
+    //int32_t found  = vector_find_int(k, table->M_keys + (hashed*8));
+    int32_t found  = vector_dennis_find_int(table->M_keys + (hashed*8), k);
     assert(0 <= found && found < 8);
 
     (table->M_keys + hashed*8)[found]   = 0;
@@ -170,16 +141,11 @@ void table_free(void)
     assert(1);
 }
 
-//endregion
 // -------------------------------  Hash Table End          -------------------------------
-
-
 
 #define BLOCK_NUM_TYPES 8
 const int32_t BLOCK_SZ[8]  = {8,64,256,1024,16384,262144,4194304,67108864};
 const int32_t BITSET_SZ[8] = {8,8, 8,  8,   4,    1,     1,      1};
-
-
 
 // -------------------------------  Block Collection Begin  -------------------------------
 //region Block Collection
@@ -248,7 +214,9 @@ int32_t collection_find_type(int32_t sz)
         return -1;
     }
 
-    int32_t type = vector_find_first_gte(BLOCK_SZ, sz);
+    //int32_t type = vector_find_first_gte(BLOCK_SZ, sz);
+    assert(sz>0);
+    int32_t type = vector_dennis_first_ge(BLOCK_SZ, sz - 1);
 
     assert(type < BLOCK_NUM_TYPES);
 
@@ -261,7 +229,8 @@ int32_t collection_find_type(int32_t sz)
  */
 void* collection_allocate(block_collection* collection)
 {
-    uint32_t index = vector_find_first_0_bit(collection->M_bitset);
+    //uint32_t index = vector_find_first_0_bit(collection->M_bitset);
+    uint32_t index = vector_dennis_0_bit((int*)collection->M_bitset);
 
     if (index >= 256)
     {
@@ -611,6 +580,7 @@ void* serial_allocate(block_manager* manager, size_t sz)
     manager_lock(manager);
 
     block_collection* collection = manager->M_heads[type];
+
     assert((collection == NULL) == (manager->M_num[type] == 0));
 
     // no collection available or

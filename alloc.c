@@ -4,11 +4,8 @@
 #include <stddef.h>
 #include <alloc.h>
 #include <string.h>
-
+#include <immintrin.h>
 #include <assert.h>
-
-#include "hashtable.h"
-#include "intrinsics.h"
 
 struct memory_block_collection;
 struct memory_block_manager;
@@ -16,11 +13,135 @@ struct memory_block_manager;
 typedef struct memory_block_manager block_manager;
 
 
+// -------------------------------  Vector Begin            -------------------------------
+
+int vector_dennis_first_ge(const int* arr, int num)
+{
+    __m256i haystack = _mm256_lddqu_si256((const __m256i*)arr);
+    __m256i needle   = _mm256_set_epi32(num, num, num, num, num, num, num, num);
+    __m256i comp     = _mm256_cmpgt_epi32(haystack, needle);
+    int mask         = _mm256_movemask_ps(_mm256_castsi256_ps(comp));
+    return __builtin_ctz(mask);
+}
+
+int vector_dennis_0_bit(const int* arr)
+{
+    __m256i haystack = _mm256_lddqu_si256((const __m256i*)arr);
+    __m256i needle   = _mm256_set_epi32(0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF);
+    __m256i comp     = _mm256_cmpeq_epi32(haystack, needle);
+    int mask         = _mm256_movemask_ps(_mm256_castsi256_ps(comp));
+    int ind          = __builtin_ctz(~mask);
+
+    if (ind == 8)
+        return 256;
+    int check   = ~arr[ind];
+    int bit_ind = __builtin_clz(check);
+    return 32*ind + (31-bit_ind);
+}
+
+int vector_dennis_find_int(const int* arr, int num)
+{
+    __m256i haystack = _mm256_lddqu_si256((const __m256i*)arr);
+    __m256i needle   = _mm256_set_epi32(num, num, num, num, num, num, num, num);
+    __m256i comp     = _mm256_cmpeq_epi32(haystack, needle);
+    int mask         = _mm256_movemask_ps(_mm256_castsi256_ps(comp));
+    return __builtin_ctz(mask);
+}
+
+// -------------------------------  Vector End              -------------------------------
+
+// -------------------------------  Hash Table Begin        -------------------------------
+
+/**
+ * a probabilistic hash table that uses fixed seperate chaining
+ */
+typedef struct fast_hash_table
+{
+    int32_t    M_sz;
+    int32_t*   M_keys;
+    char**     M_values;
+}
+hash_table;
+
+/**
+ * hash function taken from internet
+ * https://stackoverflow.com/questions/664014/what-integer-hash-function-are-good-that-accepts-an-integer-hash-key
+ */
+int32_t table_hash(hash_table* table, int32_t x)
+{
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = (x >> 16) ^ x;
+    return 1 + (x % table->M_sz);
+}
+
+int32_t table_need(int32_t sz)
+{
+    return sizeof(hash_table) + ((8 * sz) * sizeof(int32_t)) + ((8 * sz) + sizeof(char*));
+}
+
+void table_init(hash_table* table, int32_t sz)
+{
+    /*
+        layout of table in memory is
+        M_sz         number of keys
+        M_keys       (point to p1)
+        M_values     (p2)
+        keys start   (p1)
+        ...
+        values start (p2)
+        ...
+    */
+
+    const int32_t key_sz = sizeof(int32_t) * (8 * sz);
+    table->M_sz          = sz;
+    table->M_keys        = (int32_t*)((char*)table + sizeof(hash_table));
+    table->M_values      = (char**)((char*)table + sizeof(hash_table) + key_sz);
+
+    memset(table->M_keys, 0, key_sz);
+}
+
+void* table_lookup(hash_table* table, int32_t k)
+{
+    int32_t hashed = table_hash(table, k);
+    int32_t found  = vector_dennis_find_int(table->M_keys + (hashed*8), k);
+
+    return found >= 8 ? NULL : (table->M_values + hashed*8)[found];
+}
+
+void table_insert(hash_table* table, int32_t k, void* data)
+{
+    int32_t hashed = table_hash(table, k);
+    int32_t found  = vector_dennis_find_int(table->M_keys + (hashed*8), k);
+
+    if (found >= 8) // inserting new key
+        found = vector_dennis_find_int(table->M_keys + (hashed*8), 0);
+    assert(0 <= found && found < 8);
+
+    (table->M_keys + hashed*8)[found]   = k;
+    (table->M_values + hashed*8)[found] = (char*)data;
+}
+
+void table_remove(hash_table* table, int32_t k)
+{
+    int32_t hashed = table_hash(table, k);
+    int32_t found  = vector_dennis_find_int(table->M_keys + (hashed*8), k);
+    assert(0 <= found && found < 8);
+
+    (table->M_keys + hashed*8)[found]   = 0;
+    (table->M_values + hashed*8)[found] = NULL;
+}
+
+void table_free(void)
+{
+    assert(1);
+}
+
+// -------------------------------  Hash Table End          -------------------------------
+
 #define BLOCK_NUM_TYPES 8
 const int32_t BLOCK_SZ[8]  = {8,64,256,1024,16384,262144,4194304,67108864};
 const int32_t BITSET_SZ[8] = {8,8, 8,  8,   4,    1,     1,      1};
-
-
 
 // -------------------------------  Block Collection Begin  -------------------------------
 //region Block Collection
@@ -89,7 +210,8 @@ int32_t collection_find_type(int32_t sz)
         return -1;
     }
 
-    int32_t type = vector_find_first_gte(BLOCK_SZ, sz);
+    assert(sz>0);
+    int32_t type = vector_dennis_first_ge(BLOCK_SZ, sz - 1);
 
     assert(type < BLOCK_NUM_TYPES);
 
@@ -102,7 +224,7 @@ int32_t collection_find_type(int32_t sz)
  */
 void* collection_allocate(block_collection* collection)
 {
-    uint32_t index = vector_find_first_0_bit(collection->M_bitset);
+    uint32_t index = vector_dennis_0_bit((int*)collection->M_bitset);
 
     if (index >= 256)
     {

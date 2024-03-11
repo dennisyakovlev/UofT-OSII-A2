@@ -18,6 +18,7 @@ void unique_1()
         {
             void* ptr = mm_malloc(j);
             assert(st.find(ptr) == end(st));
+            cout << i << " " << j << endl;
             st.insert(ptr);
         }
     }
