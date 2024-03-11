@@ -179,6 +179,7 @@ void* table_lookup(hash_table* table, int32_t k)
 void table_insert(hash_table* table, int32_t k, void* data)
 {
     int32_t hashed = table_hash(table, k);
+//    fprintf(stderr, "hash(%d)=%d\n", k, hashed);
     int32_t found  = vector_find_int(k, table->M_keys + (hashed*8));
 
     if (found >= 8) // inserting new key
@@ -530,26 +531,17 @@ int allocator_take_collection(block_manager *into, collection_info req)
 }
 
 /**
- * return to allocator a list of collections. must be same sizes.
- * end of list must point to null
+ * return a block collection back to global
+ * it must not belong to any managers
+ * Note: global allocator will be locked by this function
  */
-int allocator_give_collection(block_manager* manager, block_collection* collection)
+void allocator_return_collection_to_global(block_collection* collection, uint32_t type)
 {
+    assert(collection->M_owner == NULL);
+    manager_lock(&allocator);
     // insert block collection at start
-    // need to convert to index
-    for (uint32_t type=0; type!=BLOCK_NUM_TYPES; ++type)
-    {
-        if (collection->M_blk_sz==BLOCK_SZ[type])
-        {
-            //TODO: use manager insert
-            block_collection* next = manager->M_heads[type];
-            manager->M_heads[type] = collection;
-            manager->M_heads[type]->M_next = next;
-            return 0;
-        }
-    }
-
-    return 1;
+    manager_insert(&allocator, NULL, type, collection);
+    manager_unlock(&allocator);
 }
 
 /**
@@ -701,15 +693,29 @@ void serial_free(void* ptr)
 
     collection_free(ptr);
 
-    // if collection is now not full, move to end of not fulls
-    if (collection->M_num_free == 1)  //TODO check empty and return to global
+    if (collection->M_num_free == 1)
     {
+        assert(collection->M_bitset != 0);
+        // if collection is now not full, move to end of not fulls
         const int32_t type = collection_find_type(collection->M_blk_sz);
         if (manager->M_mids[type] != collection)
         {
             manager_erase(manager, type, collection);
             manager_insert(manager, manager->M_mids[type], type, collection);
         }
+    }
+
+    if (collection->M_bitset == 0)
+    {
+        assert(collection->M_num_free > 1);
+        // this collection is completely empty, we should give it back to global
+        const int32_t type = collection_find_type(collection->M_blk_sz);
+        manager_erase(manager, type, collection);
+        manager_unlock(manager);
+
+        //return the memory
+        allocator_return_collection_to_global(collection, type);
+        return;
     }
 
     manager_unlock(manager);
@@ -719,7 +725,9 @@ hash_table* G_table;
 
 void *mm_malloc(size_t sz)
 {
-    block_manager* manager = (block_manager*) table_lookup(G_table, pthread_self());
+    pthread_t tid = pthread_self();
+//    fprintf(stderr, "Thread %lu allocating %lu\n", tid, sz);
+    block_manager* manager = (block_manager*) table_lookup(G_table, tid);
 
     if (manager == NULL)
     {
