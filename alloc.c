@@ -362,7 +362,8 @@ typedef struct memory_block_manager
 
 void manager_init(block_manager* manager)
 {
-    assert(pthread_mutex_init(&manager->M_lock, NULL) == 0);
+    int ret = pthread_mutex_init(&manager->M_lock, NULL);
+    assert(ret == 0);
 }
 
 /**
