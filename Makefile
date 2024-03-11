@@ -4,7 +4,7 @@ OBJ_DEPS = alloc.o
 
 TEST_FLAGS = -std=gnu99 -Wall -fmessage-length=0 -pipe -O3 -finline-limit=65000 -fkeep-inline-functions -finline-functions -ffast-math -fomit-frame-pointer -D_REENTRANT=1 -march=native
 
-TEST_FLAGS_DBG = -std=gnu99 -Wall -fmessage-length=0 -pipe -O3 -g -finline-limit=65000 -fkeep-inline-functions -finline-functions -ffast-math -fomit-frame-pointer -D_REENTRANT=1 -march=native
+TEST_FLAGS_DBG = -std=gnu99 -Wall -g -D_REENTRANT=1 -march=native
 
 
 .PHONY: tests clean
@@ -17,10 +17,10 @@ main: $(OBJ_DEPS) main.c
 main2: $(OBJ_DEPS) main2.c
 	$(CC) $(CC_FLAGS) $^ -o $@
 
-linux-scalability: memlib.c alloc.c mm_thread.c timer.c linux-scalability.c
+linux-scalability: memlib.c mm_thread.c timer.c alloc.c linux-scalability.c
 	gcc $(TEST_FLAGS) $^  -lm -o $@
 
-linux-scalability-dbg: memlib.c alloc.c mm_thread.c timer.c linux-scalability.c
+linux-scalability-dbg: memlib.c mm_thread.c timer.c alloc.c linux-scalability.c
 	gcc $(TEST_FLAGS_DBG) $^ -lm -o $@
 
 tests: 
